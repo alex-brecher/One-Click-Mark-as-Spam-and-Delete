@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>One-Click Mark as Spam — Settings</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <h1>One-Click Mark as Spam</h1>
+      <p class="subtitle">Settings</p>
+    </header>
+
+    <section class="options">
+      <label class="option">
+        <input type="checkbox" id="showToolbarButton" />
+        <span>Show toolbar button in Gmail</span>
+      </label>
+
+      <label class="option">
+        <input type="checkbox" id="showRowButtons" />
+        <span>Show a spam button on each email row (on hover)</span>
+      </label>
+
+      <label class="option">
+        <input type="checkbox" id="confirmEachClick" />
+        <span>Confirm before marking as spam</span>
+      </label>
+
+      <label class="option option--info">
+        <span class="hint">
+          Note: Reporting an email as spam moves it to Gmail's Spam folder, where it is
+          permanently deleted after 30 days. Permanent delete from Spam in one click is
+          not yet supported because Gmail requires a follow-up confirmation.
+        </span>
+      </label>
+    </section>
+
+    <footer>
+      <span id="status" class="status" aria-live="polite"></span>
+      <a href="https://mail.google.com/" target="_blank" rel="noopener">Open Gmail</a>
+    </footer>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
