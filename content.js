@@ -6,7 +6,7 @@
   const TOAST_CLASS = 'ocs-toast';
 
   const DEFAULTS = {
-    alsoPermanentDelete: true,
+    alsoArchive: true,        // belt-and-suspenders: ensure the thread leaves the inbox
     showRowButtons: true,
     showToolbarButton: true,
     confirmEachClick: false,
@@ -44,14 +44,6 @@
     }, 2400);
   }
 
-  function findByAttr(root, attrs) {
-    for (const [attr, val] of attrs) {
-      const el = root.querySelector(`[${attr}="${val}"]`);
-      if (el && isVisible(el)) return el;
-    }
-    return null;
-  }
-
   function isVisible(el) {
     if (!el) return false;
     const rect = el.getBoundingClientRect();
@@ -61,15 +53,7 @@
     return true;
   }
 
-  function findReportSpamButton(root = document) {
-    const selectors = [
-      '[aria-label="Report spam"]',
-      '[data-tooltip="Report spam"]',
-      '[aria-label*="Report spam"]',
-      '[data-tooltip*="Report spam"]',
-      'div[act="9"]',
-      'div[act="55"]',
-    ];
+  function findFirstVisible(selectors, root = document) {
     for (const sel of selectors) {
       const matches = root.querySelectorAll(sel);
       for (const el of matches) {
@@ -79,20 +63,39 @@
     return null;
   }
 
-  function findDeleteForeverButton(root = document) {
-    const selectors = [
-      '[aria-label="Delete forever"]',
-      '[data-tooltip="Delete forever"]',
-      '[aria-label*="Delete forever"]',
-      '[data-tooltip*="Delete forever"]',
-    ];
-    for (const sel of selectors) {
-      const matches = root.querySelectorAll(sel);
-      for (const el of matches) {
-        if (isVisible(el)) return el;
-      }
-    }
-    return null;
+  function findReportSpamButton(root = document) {
+    return findFirstVisible(
+      [
+        '[aria-label="Report spam"]',
+        '[data-tooltip="Report spam"]',
+        '[aria-label*="Report spam"]',
+        '[data-tooltip*="Report spam"]',
+        'div[act="9"]',
+        'div[act="55"]',
+      ],
+      root
+    );
+  }
+
+  function findArchiveButton(root = document) {
+    return findFirstVisible(
+      [
+        '[aria-label="Archive"]',
+        '[data-tooltip="Archive"]',
+        '[aria-label*="Archive"]',
+        '[data-tooltip*="Archive"]',
+        'div[act="7"]',
+      ],
+      root
+    );
+  }
+
+  function findRowCheckbox(row) {
+    return row.querySelector('[role="checkbox"]');
+  }
+
+  function isChecked(checkbox) {
+    return checkbox && checkbox.getAttribute('aria-checked') === 'true';
   }
 
   function nativeClick(el) {
@@ -111,39 +114,43 @@
     }
   }
 
-  function reportSpamForOpenedThread() {
-    const btn = findReportSpamButton();
-    if (btn) {
-      nativeClick(btn);
-      return true;
-    }
-    return false;
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  async function permanentlyDeleteLastReported() {
-    // After reporting spam, Gmail shows an undo bar. We need to actually navigate to spam
-    // and permanently delete. To avoid disrupting the user, we instead listen for the
-    // next time the user visits Spam, OR provide guidance. For an automated path, we
-    // attempt to navigate to the Spam folder, select all, and delete forever — but only
-    // if the user has explicitly enabled it for the *currently selected* messages.
-    // For safety, this helper instead does nothing here and returns false; the toolbar
-    // path only triggers Spam (Gmail permanently deletes spam after 30 days). The row
-    // button path handles permanent delete by chaining actions on opened threads.
-    return false;
+  // Click Gmail's "Report spam" button, then — if requested — click "Archive" as a
+  // safety net so the conversation can't linger in the inbox due to per-message
+  // labels in a multi-message thread. If "Report spam" is missing, fall back to the
+  // "!" keyboard shortcut (requires Gmail keyboard shortcuts enabled).
+  async function reportSpamAndEnsureGone() {
+    const spamBtn = findReportSpamButton();
+    if (spamBtn) {
+      nativeClick(spamBtn);
+    } else {
+      simulateGmailShortcut('!');
+    }
+
+    if (!settings.alsoArchive) return Boolean(spamBtn);
+
+    // After Gmail processes the spam action, the toolbar's Archive button may still
+    // be present if any selection / open thread remains. Clicking it removes the
+    // Inbox label without un-doing the spam label, guaranteeing the thread leaves
+    // the inbox view.
+    await sleep(450);
+    const archiveBtn = findArchiveButton();
+    if (archiveBtn) nativeClick(archiveBtn);
+    return true;
   }
 
   function processSelectedOrOpenedThread() {
-    if (settings.confirmEachClick) {
-      if (!confirm('Mark this email as spam?')) return;
-    }
-    const ok = reportSpamForOpenedThread();
-    if (ok) {
-      showToast('Marked as spam', 'success');
-    } else {
-      // Fallback: keyboard shortcut "!" (requires shortcuts enabled in Gmail settings)
-      simulateGmailShortcut('!');
-      showToast('Tried "!" shortcut — enable Gmail keyboard shortcuts if nothing happens', 'warn');
-    }
+    if (settings.confirmEachClick && !confirm('Mark this email as spam?')) return;
+    reportSpamAndEnsureGone().then((ok) => {
+      if (ok) {
+        showToast(settings.alsoArchive ? 'Marked as spam & removed from inbox' : 'Marked as spam', 'success');
+      } else {
+        showToast('Could not find Gmail\'s Report Spam control', 'warn');
+      }
+    });
   }
 
   function simulateGmailShortcut(key) {
@@ -159,7 +166,6 @@
   }
 
   function findGmailToolbar() {
-    // gh="tm" is Gmail's main toolbar container that holds action buttons.
     const tm = document.querySelector('[gh="tm"]');
     if (tm && isVisible(tm)) return tm;
     return null;
@@ -187,7 +193,7 @@
           <path d="M12 2L1 21h22L12 2zm1 14h-2v2h2v-2zm0-6h-2v5h2v-5z"/>
         </svg>
       </span>
-      <span class="ocs-toolbar-btn__label">Spam &amp; Delete</span>
+      <span class="ocs-toolbar-btn__label">Mark as Spam</span>
     `;
     btn.addEventListener('click', (e) => {
       e.preventDefault();
@@ -209,11 +215,9 @@
       document.querySelectorAll('.' + ROW_BTN_CLASS).forEach((el) => el.remove());
       return;
     }
-    // Gmail email rows have class "zA" in the inbox list view.
     const rows = document.querySelectorAll('tr.zA');
     rows.forEach((row) => {
       if (row.querySelector('.' + ROW_BTN_CLASS)) return;
-      // Find the rightmost cell where actions/timestamp live.
       const lastCell = row.querySelector('td.xY') || row.lastElementChild;
       if (!lastCell) return;
 
@@ -231,26 +235,40 @@
         e.stopPropagation();
         handleRowClick(row);
       });
-      // Position the button so it appears on row hover.
       lastCell.appendChild(btn);
     });
   }
 
-  function handleRowClick(row) {
-    if (settings.confirmEachClick) {
-      if (!confirm('Mark this email as spam?')) return;
+  // Row click path: select just this row's checkbox, then drive Gmail's toolbar.
+  // This avoids opening the email and avoids accidentally including other selected
+  // rows in the action.
+  async function handleRowClick(row) {
+    if (settings.confirmEachClick && !confirm('Mark this email as spam?')) return;
+
+    // Deselect any other currently-selected rows so we don't act on them.
+    document
+      .querySelectorAll('tr.zA [role="checkbox"][aria-checked="true"]')
+      .forEach((cb) => {
+        const otherRow = cb.closest('tr.zA');
+        if (otherRow && otherRow !== row) nativeClick(cb);
+      });
+
+    const checkbox = findRowCheckbox(row);
+    if (checkbox && !isChecked(checkbox)) {
+      nativeClick(checkbox);
     }
-    // Open the email, then report spam, then go back to inbox.
-    const subjectCell = row.querySelector('td[role="link"]') || row.querySelector('.y6') || row;
-    nativeClick(subjectCell);
-    setTimeout(() => {
-      const ok = reportSpamForOpenedThread();
-      if (ok) {
-        showToast('Marked as spam', 'success');
-      } else {
-        showToast('Could not find the spam button — try opening the email first', 'warn');
-      }
-    }, 350);
+
+    // Gmail needs a tick to update the toolbar with action buttons.
+    await sleep(180);
+
+    const ok = await reportSpamAndEnsureGone();
+    if (ok) {
+      showToast(settings.alsoArchive ? 'Marked as spam & removed from inbox' : 'Marked as spam', 'success');
+    } else {
+      showToast('Could not find Gmail\'s Report Spam control', 'warn');
+      // Roll back our selection so we don't leave the row in a weird state.
+      if (checkbox && isChecked(checkbox)) nativeClick(checkbox);
+    }
   }
 
   // Re-inject on Gmail's frequent DOM updates.

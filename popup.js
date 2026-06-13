@@ -1,6 +1,7 @@
 const DEFAULTS = {
   showToolbarButton: true,
   showRowButtons: true,
+  alsoArchive: true,
   confirmEachClick: false,
 };
 

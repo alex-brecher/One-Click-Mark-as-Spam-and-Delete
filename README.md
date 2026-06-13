@@ -5,20 +5,25 @@ one in the main toolbar and one on each inbox row (visible on hover).
 
 ## What it does
 
-- Adds a red **Spam & Delete** button to Gmail's main toolbar. Click it while an
+- Adds a red **Mark as Spam** button to Gmail's main toolbar. Click it while an
   email (or set of emails) is selected and the extension fires Gmail's "Report
-  spam" action — the email is reported and moved to the Spam folder.
-- Adds a small hover button to each row in the inbox list so you can flag a
-  message without opening it first.
+  spam" action.
+- Adds a small hover button to each row in the inbox list. Clicking it selects
+  just that row's checkbox and then drives Gmail's toolbar — no need to open the
+  email first.
+- Includes an **"Also archive"** safety net (on by default). After reporting
+  spam the extension also clicks Archive, which removes the Inbox label even
+  for stubborn conversation threads where Gmail occasionally leaves the
+  message visible after a spam report. The email lives in Spam after this,
+  not the inbox.
 - Provides an options popup (click the extension icon in the toolbar) to toggle
-  the toolbar button, the row buttons, and a "confirm before mark as spam"
-  guard.
+  the toolbar button, the row buttons, the archive safety net, and a "confirm
+  before mark as spam" guard.
 
-> Gmail permanently deletes messages from the Spam folder after 30 days, so
-> reporting an email as spam effectively removes it from your account. Truly
-> "permanent delete in one click" requires a Gmail-side confirmation that the
-> page does not currently expose to extensions, so the extension stops after
-> the spam-report step.
+> Messages in Gmail's Spam folder are auto-deleted after 30 days. Immediate
+> permanent delete in one click would require the Gmail API (OAuth) because
+> "Delete forever" sits behind a Gmail confirmation dialog that the page
+> doesn't expose to extensions.
 
 ## Installation (unpacked)
 
