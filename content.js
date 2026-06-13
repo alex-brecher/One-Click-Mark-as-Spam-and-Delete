@@ -6,7 +6,7 @@
   const TOAST_CLASS = 'ocs-toast';
 
   const DEFAULTS = {
-    alsoArchive: true,        // belt-and-suspenders: ensure the thread leaves the inbox
+    alsoDelete: true,         // after Report Spam, also click Delete (trash) to guarantee removal
     showRowButtons: true,
     showToolbarButton: true,
     confirmEachClick: false,
@@ -77,14 +77,14 @@
     );
   }
 
-  function findArchiveButton(root = document) {
+  function findDeleteButton(root = document) {
+    // Matches the trash-can "Delete" button that sits next to "Report spam"
+    // in Gmail's toolbar. Excludes "Delete forever", "Delete draft", etc.
     return findFirstVisible(
       [
-        '[aria-label="Archive"]',
-        '[data-tooltip="Archive"]',
-        '[aria-label*="Archive"]',
-        '[data-tooltip*="Archive"]',
-        'div[act="7"]',
+        '[aria-label="Delete"]',
+        '[data-tooltip="Delete"]',
+        'div[act="10"]',
       ],
       root
     );
@@ -118,10 +118,12 @@
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  // Click Gmail's "Report spam" button, then — if requested — click "Archive" as a
-  // safety net so the conversation can't linger in the inbox due to per-message
-  // labels in a multi-message thread. If "Report spam" is missing, fall back to the
-  // "!" keyboard shortcut (requires Gmail keyboard shortcuts enabled).
+  // Click Gmail's "Report spam" button, then — if requested — click "Delete"
+  // (the trash icon right next to it). Gmail occasionally leaves threads visible
+  // in the inbox after a spam report; chaining Delete reproduces the manual
+  // workflow ("hit spam, then hit trash") and guarantees the thread is gone.
+  // If "Report spam" is missing, fall back to the "!" keyboard shortcut
+  // (requires Gmail keyboard shortcuts enabled).
   async function reportSpamAndEnsureGone() {
     const spamBtn = findReportSpamButton();
     if (spamBtn) {
@@ -130,15 +132,11 @@
       simulateGmailShortcut('!');
     }
 
-    if (!settings.alsoArchive) return Boolean(spamBtn);
+    if (!settings.alsoDelete) return Boolean(spamBtn);
 
-    // After Gmail processes the spam action, the toolbar's Archive button may still
-    // be present if any selection / open thread remains. Clicking it removes the
-    // Inbox label without un-doing the spam label, guaranteeing the thread leaves
-    // the inbox view.
     await sleep(450);
-    const archiveBtn = findArchiveButton();
-    if (archiveBtn) nativeClick(archiveBtn);
+    const deleteBtn = findDeleteButton();
+    if (deleteBtn) nativeClick(deleteBtn);
     return true;
   }
 
@@ -146,7 +144,7 @@
     if (settings.confirmEachClick && !confirm('Mark this email as spam?')) return;
     reportSpamAndEnsureGone().then((ok) => {
       if (ok) {
-        showToast(settings.alsoArchive ? 'Marked as spam & removed from inbox' : 'Marked as spam', 'success');
+        showToast(settings.alsoDelete ? 'Marked as spam & deleted' : 'Marked as spam', 'success');
       } else {
         showToast('Could not find Gmail\'s Report Spam control', 'warn');
       }

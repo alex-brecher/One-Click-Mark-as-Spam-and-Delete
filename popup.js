@@ -1,7 +1,7 @@
 const DEFAULTS = {
   showToolbarButton: true,
   showRowButtons: true,
-  alsoArchive: true,
+  alsoDelete: true,
   confirmEachClick: false,
 };
 

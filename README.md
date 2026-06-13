@@ -11,11 +11,12 @@ one in the main toolbar and one on each inbox row (visible on hover).
 - Adds a small hover button to each row in the inbox list. Clicking it selects
   just that row's checkbox and then drives Gmail's toolbar — no need to open the
   email first.
-- Includes an **"Also archive"** safety net (on by default). After reporting
-  spam the extension also clicks Archive, which removes the Inbox label even
-  for stubborn conversation threads where Gmail occasionally leaves the
-  message visible after a spam report. The email lives in Spam after this,
-  not the inbox.
+- Includes an **"Also click Delete"** safety net (on by default). Many Gmail
+  threads don't actually leave the inbox after only a spam report — you have to
+  click Delete right after. The extension reproduces that two-click workflow in
+  one action: it fires Report Spam, then fires Delete (the trash icon right
+  next to it). The email is reported as spam and dropped into Trash, where
+  Gmail purges it after 30 days.
 - Provides an options popup (click the extension icon in the toolbar) to toggle
   the toolbar button, the row buttons, the archive safety net, and a "confirm
   before mark as spam" guard.
