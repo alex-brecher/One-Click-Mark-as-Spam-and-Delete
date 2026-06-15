@@ -118,6 +118,28 @@
     return null;
   }
 
+  // Finds Gmail's "Report spam or unsubscribe?" pre-confirmation dialog and returns
+  // its "Report spam" button. To avoid misfiring on any other dialog with a Report
+  // spam button, we require both a "Report spam" AND an "Unsubscribe" button to be
+  // present in the same dialog.
+  function findReportSpamInDialog() {
+    const dialogs = document.querySelectorAll('[role="dialog"], [role="alertdialog"]');
+    for (const d of dialogs) {
+      if (!isUsable(d)) continue;
+      const buttons = Array.from(d.querySelectorAll('button, [role="button"]'));
+      let reportBtn = null;
+      let hasUnsub = false;
+      for (const b of buttons) {
+        if (!isUsable(b)) continue;
+        const text = (b.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        if (text === 'report spam') reportBtn = b;
+        else if (text === 'unsubscribe') hasUnsub = true;
+      }
+      if (reportBtn && hasUnsub) return reportBtn;
+    }
+    return null;
+  }
+
   // Finds Gmail's "Spam reported. Also block sender?" confirmation button.
   // Matches buttons (HTMLButton or role=button) whose visible text is "Yes, block".
   function findBlockSenderButton() {
@@ -149,10 +171,17 @@
     }
     nativeClick(spamBtn);
 
-    // After Report Spam, Gmail sometimes pops a "Spam reported. Also block sender?"
-    // dialog. While that dialog is open, the Delete button is unreachable, so handle
-    // it first. The dialog title confirms the spam action already went through, so
-    // when it appears the email is already in Spam and Delete is a no-op afterward.
+    // Pre-confirmation dialog: "Report spam or unsubscribe?". Click "Report spam"
+    // so the spam action actually goes through (otherwise it just sits there).
+    const preConfirmBtn = await waitFor(findReportSpamInDialog, 900);
+    if (preConfirmBtn) {
+      nativeClick(preConfirmBtn);
+      await sleep(250);
+    }
+
+    // Post-confirmation dialog: "Spam reported. Also block sender?". While this is
+    // open the Delete button is unreachable, so handle it first. When it appears,
+    // the email is already in Spam — the Delete step would be a no-op afterward.
     let dialogHandled = false;
     if (settings.autoBlockSender) {
       const blockBtn = await waitFor(findBlockSenderButton, 1200);
