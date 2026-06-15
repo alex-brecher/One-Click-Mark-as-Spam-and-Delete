@@ -284,19 +284,18 @@
     }
 
     // Post-confirmation dialog: "Spam reported. Also block sender?". While this is
-    // open the Delete button is unreachable, so handle it first. When it appears,
-    // the email is already in Spam — the Delete step would be a no-op afterward.
-    let dialogHandled = false;
+    // open the Delete button is unreachable, so handle it first.
+    let blocked = false;
     if (settings.autoBlockSender) {
       const blockBtn = await waitFor(findBlockSenderButton, 1200);
       if (blockBtn) {
         nativeClick(blockBtn);
-        dialogHandled = true;
+        blocked = true;
         await sleep(250);
       }
     }
 
-    if (!dialogHandled && settings.alsoDelete) {
+    if (settings.alsoDelete) {
       await sleep(450);
       const delBtn = findDeleteButton();
       if (delBtn) {
@@ -310,12 +309,10 @@
       }
     }
 
-    const msg = dialogHandled
-      ? 'Marked as spam & sender blocked'
-      : settings.alsoDelete
-      ? 'Marked as spam & deleted'
-      : 'Marked as spam';
-    showToast(msg, 'success');
+    const parts = ['Marked as spam'];
+    if (blocked) parts.push('sender blocked');
+    if (settings.alsoDelete) parts.push('deleted');
+    showToast(parts.join(' & '), 'success');
     return true;
   }
 
