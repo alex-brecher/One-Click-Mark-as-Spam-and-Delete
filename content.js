@@ -157,15 +157,39 @@
     ]);
   }
 
-  // Gmail's "Delete" (trash) toolbar control — explicitly avoid "Delete forever",
-  // "Delete draft", etc. by matching with an exact-equals selector first.
+  // Gmail's trash-can toolbar control. The aria-label is normally "Delete" but
+  // flips to "Delete forever" while viewing a message that already has the Spam
+  // label, so accept both. Excludes "Delete draft" (drafts toolbar).
   function findDeleteButton() {
     const exact = findFirstUsable([
       '[aria-label="Delete"]',
       '[data-tooltip="Delete"]',
     ]);
     if (exact) return exact;
-    return findFirstUsable(['div[act="10"]']);
+    const forever = findFirstUsable([
+      '[aria-label="Delete forever"]',
+      '[data-tooltip="Delete forever"]',
+    ]);
+    if (forever) return forever;
+    return findFirstUsable(['div[act="10"]', 'div[act="61"]']);
+  }
+
+  // Confirms Gmail's "Delete this message permanently?" alert when the trash
+  // icon was the "Delete forever" variant.
+  function findDeleteForeverConfirm() {
+    const dialogs = document.querySelectorAll('[role="dialog"], [role="alertdialog"]');
+    for (const d of dialogs) {
+      if (!isUsable(d)) continue;
+      const text = (d.textContent || '').toLowerCase();
+      if (!text.includes('permanently') && !text.includes('forever')) continue;
+      const buttons = Array.from(d.querySelectorAll('button, [role="button"]'));
+      for (const b of buttons) {
+        if (!isUsable(b)) continue;
+        const t = (b.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        if (t === 'ok' || t === 'delete' || t === 'delete forever') return b;
+      }
+    }
+    return null;
   }
 
   function nativeClick(el) {
@@ -275,7 +299,15 @@
     if (!dialogHandled && settings.alsoDelete) {
       await sleep(450);
       const delBtn = findDeleteButton();
-      if (delBtn) nativeClick(delBtn);
+      if (delBtn) {
+        nativeClick(delBtn);
+        // "Delete forever" pops its own "Delete this message permanently?" confirm.
+        const confirmBtn = await waitFor(findDeleteForeverConfirm, 900);
+        if (confirmBtn) {
+          nativeClick(confirmBtn);
+          await sleep(150);
+        }
+      }
     }
 
     const msg = dialogHandled
