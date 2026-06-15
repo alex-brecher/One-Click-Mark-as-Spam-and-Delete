@@ -8,6 +8,7 @@
     alsoDelete: true,
     autoBlockSender: true,
     confirmEachClick: false,
+    fabPosition: null,        // {x, y} viewport pixels; null = default bottom-right
   };
 
   let settings = { ...DEFAULTS };
@@ -16,16 +17,95 @@
     try {
       chrome.storage.sync.get(DEFAULTS, (stored) => {
         if (stored) settings = { ...DEFAULTS, ...stored };
+        const fab = document.getElementById(FAB_ID);
+        if (fab) applyFabPosition(fab, settings.fabPosition);
       });
       chrome.storage.onChanged.addListener((changes, area) => {
         if (area !== 'sync') return;
         for (const k of Object.keys(changes)) {
           settings[k] = changes[k].newValue;
         }
+        if (changes.fabPosition) {
+          const fab = document.getElementById(FAB_ID);
+          if (fab) applyFabPosition(fab, settings.fabPosition);
+        }
       });
     } catch (e) {
       // chrome.storage may be unavailable in subframes; ignore.
     }
+  }
+
+  function applyFabPosition(fab, pos) {
+    if (!pos || typeof pos.x !== 'number' || typeof pos.y !== 'number') {
+      fab.style.left = '';
+      fab.style.top = '';
+      fab.style.right = '24px';
+      fab.style.bottom = '24px';
+      return;
+    }
+    const size = fab.offsetWidth || 48;
+    const maxX = window.innerWidth - size - 4;
+    const maxY = window.innerHeight - size - 4;
+    const x = Math.max(4, Math.min(pos.x, maxX));
+    const y = Math.max(4, Math.min(pos.y, maxY));
+    fab.style.left = `${x}px`;
+    fab.style.top = `${y}px`;
+    fab.style.right = '';
+    fab.style.bottom = '';
+  }
+
+  function attachDragHandlers(fab) {
+    let startX = 0, startY = 0;
+    let originLeft = 0, originTop = 0;
+    let pointerId = null;
+    let moved = false;
+
+    fab.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      pointerId = e.pointerId;
+      startX = e.clientX;
+      startY = e.clientY;
+      const rect = fab.getBoundingClientRect();
+      originLeft = rect.left;
+      originTop = rect.top;
+      moved = false;
+      try { fab.setPointerCapture(pointerId); } catch (_) {}
+    });
+
+    fab.addEventListener('pointermove', (e) => {
+      if (pointerId !== e.pointerId) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      if (!moved && Math.hypot(dx, dy) < 4) return;
+      if (!moved) {
+        moved = true;
+        fab.classList.add('ocs-fab--dragging');
+      }
+      const size = fab.offsetWidth || 48;
+      const maxX = window.innerWidth - size - 4;
+      const maxY = window.innerHeight - size - 4;
+      const x = Math.max(4, Math.min(originLeft + dx, maxX));
+      const y = Math.max(4, Math.min(originTop + dy, maxY));
+      fab.style.left = `${x}px`;
+      fab.style.top = `${y}px`;
+      fab.style.right = '';
+      fab.style.bottom = '';
+    });
+
+    const finish = (e) => {
+      if (pointerId !== e.pointerId) return;
+      try { fab.releasePointerCapture(pointerId); } catch (_) {}
+      pointerId = null;
+      if (moved) {
+        fab.classList.remove('ocs-fab--dragging');
+        fab.dataset.justDragged = '1';
+        const rect = fab.getBoundingClientRect();
+        const pos = { x: Math.round(rect.left), y: Math.round(rect.top) };
+        try { chrome.storage.sync.set({ fabPosition: pos }); } catch (_) {}
+      }
+    };
+    fab.addEventListener('pointerup', finish);
+    fab.addEventListener('pointercancel', finish);
   }
 
   function showToast(message, type = 'info') {
@@ -217,20 +297,25 @@
     const fab = document.createElement('button');
     fab.id = FAB_ID;
     fab.type = 'button';
-    fab.title = 'Mark as Spam & Delete (One-Click)';
+    fab.title = 'Mark as Spam & Delete — drag to reposition';
     fab.setAttribute('aria-label', 'Mark as Spam and Delete');
     fab.innerHTML = `
       <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">
         <path d="M12 2L1 21h22L12 2zm1 14h-2v2h2v-2zm0-6h-2v5h2v-5z"/>
       </svg>
-      <span class="ocs-fab__label">Spam &amp; Delete</span>
     `;
     fab.addEventListener('click', (e) => {
+      if (fab.dataset.justDragged === '1') {
+        delete fab.dataset.justDragged;
+        return;
+      }
       e.preventDefault();
       e.stopPropagation();
       handleAction();
     });
     document.body.appendChild(fab);
+    applyFabPosition(fab, settings.fabPosition);
+    attachDragHandlers(fab);
   }
 
   function start() {
