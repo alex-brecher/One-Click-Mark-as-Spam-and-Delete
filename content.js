@@ -1,14 +1,11 @@
 (function () {
   'use strict';
 
-  const TOOLBAR_BTN_ID = 'ocs-toolbar-spam-btn';
-  const ROW_BTN_CLASS = 'ocs-row-spam-btn';
+  const FAB_ID = 'ocs-fab';
   const TOAST_CLASS = 'ocs-toast';
 
   const DEFAULTS = {
-    alsoDelete: true,         // after Report Spam, also click Delete (trash) to guarantee removal
-    showRowButtons: true,
-    showToolbarButton: true,
+    alsoDelete: true,
     confirmEachClick: false,
   };
 
@@ -26,7 +23,7 @@
         }
       });
     } catch (e) {
-      // chrome.storage may not be available in some frames; ignore.
+      // chrome.storage may be unavailable in subframes; ignore.
     }
   }
 
@@ -44,58 +41,50 @@
     }, 2400);
   }
 
-  function isVisible(el) {
+  function isUsable(el) {
     if (!el) return false;
     const rect = el.getBoundingClientRect();
     if (rect.width === 0 && rect.height === 0) return false;
     const style = window.getComputedStyle(el);
     if (style.visibility === 'hidden' || style.display === 'none') return false;
+    if (style.pointerEvents === 'none') return false;
+    if (el.getAttribute && el.getAttribute('aria-disabled') === 'true') return false;
     return true;
   }
 
-  function findFirstVisible(selectors, root = document) {
+  function findFirstUsable(selectors, root = document) {
     for (const sel of selectors) {
       const matches = root.querySelectorAll(sel);
       for (const el of matches) {
-        if (isVisible(el)) return el;
+        if (isUsable(el)) return el;
       }
     }
     return null;
   }
 
-  function findReportSpamButton(root = document) {
-    return findFirstVisible(
-      [
-        '[aria-label="Report spam"]',
-        '[data-tooltip="Report spam"]',
-        '[aria-label*="Report spam"]',
-        '[data-tooltip*="Report spam"]',
-        'div[act="9"]',
-        'div[act="55"]',
-      ],
-      root
-    );
+  // Gmail's "Report spam" toolbar control — try both ARIA labels and Gmail's
+  // internal action codes. Works in inbox list (when rows are checked) and in
+  // the open-email view.
+  function findReportSpamButton() {
+    return findFirstUsable([
+      '[aria-label="Report spam"]',
+      '[data-tooltip="Report spam"]',
+      '[aria-label^="Report spam"]',
+      '[data-tooltip^="Report spam"]',
+      'div[act="9"]',
+      'div[act="55"]',
+    ]);
   }
 
-  function findDeleteButton(root = document) {
-    // Matches the trash-can "Delete" button that sits next to "Report spam"
-    // in Gmail's toolbar. Excludes "Delete forever", "Delete draft", etc.
-    return findFirstVisible(
-      [
-        '[aria-label="Delete"]',
-        '[data-tooltip="Delete"]',
-        'div[act="10"]',
-      ],
-      root
-    );
-  }
-
-  function findRowCheckbox(row) {
-    return row.querySelector('[role="checkbox"]');
-  }
-
-  function isChecked(checkbox) {
-    return checkbox && checkbox.getAttribute('aria-checked') === 'true';
+  // Gmail's "Delete" (trash) toolbar control — explicitly avoid "Delete forever",
+  // "Delete draft", etc. by matching with an exact-equals selector first.
+  function findDeleteButton() {
+    const exact = findFirstUsable([
+      '[aria-label="Delete"]',
+      '[data-tooltip="Delete"]',
+    ]);
+    if (exact) return exact;
+    return findFirstUsable(['div[act="10"]']);
   }
 
   function nativeClick(el) {
@@ -118,168 +107,59 @@
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  // Click Gmail's "Report spam" button, then — if requested — click "Delete"
-  // (the trash icon right next to it). Gmail occasionally leaves threads visible
-  // in the inbox after a spam report; chaining Delete reproduces the manual
-  // workflow ("hit spam, then hit trash") and guarantees the thread is gone.
-  // If "Report spam" is missing, fall back to the "!" keyboard shortcut
-  // (requires Gmail keyboard shortcuts enabled).
-  async function reportSpamAndEnsureGone() {
+  async function spamAndDelete() {
     const spamBtn = findReportSpamButton();
-    if (spamBtn) {
-      nativeClick(spamBtn);
-    } else {
-      simulateGmailShortcut('!');
+    if (!spamBtn) {
+      showToast('Open an email or select one or more rows first', 'warn');
+      return false;
+    }
+    nativeClick(spamBtn);
+
+    if (settings.alsoDelete) {
+      await sleep(450);
+      const delBtn = findDeleteButton();
+      if (delBtn) nativeClick(delBtn);
     }
 
-    if (!settings.alsoDelete) return Boolean(spamBtn);
-
-    await sleep(450);
-    const deleteBtn = findDeleteButton();
-    if (deleteBtn) nativeClick(deleteBtn);
+    showToast(settings.alsoDelete ? 'Marked as spam & deleted' : 'Marked as spam', 'success');
     return true;
   }
 
-  function processSelectedOrOpenedThread() {
-    if (settings.confirmEachClick && !confirm('Mark this email as spam?')) return;
-    reportSpamAndEnsureGone().then((ok) => {
-      if (ok) {
-        showToast(settings.alsoDelete ? 'Marked as spam & deleted' : 'Marked as spam', 'success');
-      } else {
-        showToast('Could not find Gmail\'s Report Spam control', 'warn');
-      }
-    });
+  function handleAction() {
+    if (settings.confirmEachClick && !confirm('Mark as spam?')) return;
+    spamAndDelete();
   }
 
-  function simulateGmailShortcut(key) {
-    const evt = new KeyboardEvent('keydown', {
-      key,
-      keyCode: key.charCodeAt(0),
-      which: key.charCodeAt(0),
-      shiftKey: key === '!' || key === '#',
-      bubbles: true,
-      cancelable: true,
-    });
-    document.body.dispatchEvent(evt);
-  }
-
-  function findGmailToolbar() {
-    const tm = document.querySelector('[gh="tm"]');
-    if (tm && isVisible(tm)) return tm;
-    return null;
-  }
-
-  function injectToolbarButton() {
-    if (!settings.showToolbarButton) {
-      const existing = document.getElementById(TOOLBAR_BTN_ID);
-      if (existing) existing.remove();
-      return;
-    }
-    if (document.getElementById(TOOLBAR_BTN_ID)) return;
-    const toolbar = findGmailToolbar();
-    if (!toolbar) return;
-
-    const btn = document.createElement('div');
-    btn.id = TOOLBAR_BTN_ID;
-    btn.className = 'ocs-toolbar-btn';
-    btn.setAttribute('role', 'button');
-    btn.setAttribute('tabindex', '0');
-    btn.title = 'Mark as Spam (One-Click)';
-    btn.innerHTML = `
-      <span class="ocs-toolbar-btn__icon" aria-hidden="true">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-          <path d="M12 2L1 21h22L12 2zm1 14h-2v2h2v-2zm0-6h-2v5h2v-5z"/>
-        </svg>
-      </span>
-      <span class="ocs-toolbar-btn__label">Mark as Spam</span>
+  function injectFab() {
+    if (document.getElementById(FAB_ID)) return;
+    const fab = document.createElement('button');
+    fab.id = FAB_ID;
+    fab.type = 'button';
+    fab.title = 'Mark as Spam & Delete (One-Click)';
+    fab.setAttribute('aria-label', 'Mark as Spam and Delete');
+    fab.innerHTML = `
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">
+        <path d="M12 2L1 21h22L12 2zm1 14h-2v2h2v-2zm0-6h-2v5h2v-5z"/>
+      </svg>
+      <span class="ocs-fab__label">Spam &amp; Delete</span>
     `;
-    btn.addEventListener('click', (e) => {
+    fab.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      processSelectedOrOpenedThread();
+      handleAction();
     });
-    btn.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        processSelectedOrOpenedThread();
-      }
-    });
-
-    toolbar.appendChild(btn);
+    document.body.appendChild(fab);
   }
-
-  function injectRowButtons() {
-    if (!settings.showRowButtons) {
-      document.querySelectorAll('.' + ROW_BTN_CLASS).forEach((el) => el.remove());
-      return;
-    }
-    const rows = document.querySelectorAll('tr.zA');
-    rows.forEach((row) => {
-      if (row.querySelector('.' + ROW_BTN_CLASS)) return;
-      const lastCell = row.querySelector('td.xY') || row.lastElementChild;
-      if (!lastCell) return;
-
-      const btn = document.createElement('span');
-      btn.className = ROW_BTN_CLASS;
-      btn.setAttribute('role', 'button');
-      btn.title = 'Mark as Spam (One-Click)';
-      btn.innerHTML = `
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
-          <path d="M12 2L1 21h22L12 2zm1 14h-2v2h2v-2zm0-6h-2v5h2v-5z"/>
-        </svg>
-      `;
-      btn.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        handleRowClick(row);
-      });
-      lastCell.appendChild(btn);
-    });
-  }
-
-  // Row click path: select just this row's checkbox, then drive Gmail's toolbar.
-  // This avoids opening the email and avoids accidentally including other selected
-  // rows in the action.
-  async function handleRowClick(row) {
-    if (settings.confirmEachClick && !confirm('Mark this email as spam?')) return;
-
-    // Deselect any other currently-selected rows so we don't act on them.
-    document
-      .querySelectorAll('tr.zA [role="checkbox"][aria-checked="true"]')
-      .forEach((cb) => {
-        const otherRow = cb.closest('tr.zA');
-        if (otherRow && otherRow !== row) nativeClick(cb);
-      });
-
-    const checkbox = findRowCheckbox(row);
-    if (checkbox && !isChecked(checkbox)) {
-      nativeClick(checkbox);
-    }
-
-    // Gmail needs a tick to update the toolbar with action buttons.
-    await sleep(180);
-
-    const ok = await reportSpamAndEnsureGone();
-    if (ok) {
-      showToast(settings.alsoArchive ? 'Marked as spam & removed from inbox' : 'Marked as spam', 'success');
-    } else {
-      showToast('Could not find Gmail\'s Report Spam control', 'warn');
-      // Roll back our selection so we don't leave the row in a weird state.
-      if (checkbox && isChecked(checkbox)) nativeClick(checkbox);
-    }
-  }
-
-  // Re-inject on Gmail's frequent DOM updates.
-  const observer = new MutationObserver(() => {
-    injectToolbarButton();
-    injectRowButtons();
-  });
 
   function start() {
     loadSettings();
-    injectToolbarButton();
-    injectRowButtons();
-    observer.observe(document.body, { childList: true, subtree: true });
+    injectFab();
+    // Gmail re-renders the document body during navigation; if our FAB is ever
+    // removed, drop it back in.
+    const observer = new MutationObserver(() => {
+      if (!document.getElementById(FAB_ID)) injectFab();
+    });
+    observer.observe(document.body, { childList: true, subtree: false });
   }
 
   if (document.readyState === 'loading') {

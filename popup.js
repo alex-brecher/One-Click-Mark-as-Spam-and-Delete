@@ -1,6 +1,4 @@
 const DEFAULTS = {
-  showToolbarButton: true,
-  showRowButtons: true,
   alsoDelete: true,
   confirmEachClick: false,
 };

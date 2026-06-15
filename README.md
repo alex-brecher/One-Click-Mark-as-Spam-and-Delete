@@ -5,26 +5,20 @@ one in the main toolbar and one on each inbox row (visible on hover).
 
 ## What it does
 
-- Adds a red **Mark as Spam** button to Gmail's main toolbar. Click it while an
-  email (or set of emails) is selected and the extension fires Gmail's "Report
-  spam" action.
-- Adds a small hover button to each row in the inbox list. Clicking it selects
-  just that row's checkbox and then drives Gmail's toolbar — no need to open the
-  email first.
-- Includes an **"Also click Delete"** safety net (on by default). Many Gmail
-  threads don't actually leave the inbox after only a spam report — you have to
-  click Delete right after. The extension reproduces that two-click workflow in
-  one action: it fires Report Spam, then fires Delete (the trash icon right
-  next to it). The email is reported as spam and dropped into Trash, where
-  Gmail purges it after 30 days.
-- Provides an options popup (click the extension icon in the toolbar) to toggle
-  the toolbar button, the row buttons, the archive safety net, and a "confirm
-  before mark as spam" guard.
+- Adds a red **Spam & Delete** floating button to the bottom-right corner of
+  every Gmail page (inbox, search results, open email, labels — everywhere).
+- When clicked, it fires Gmail's "Report spam" toolbar action and then,
+  immediately after, fires Gmail's "Delete" action — the same two clicks
+  you'd do by hand to actually get a thread out of the inbox.
+- Works whether you have a single email open or multiple rows checkbox-selected.
+- Provides an options popup (click the extension icon in Chrome's toolbar) to
+  toggle the auto-delete-after-spam behavior and a "confirm before mark as
+  spam" guard.
 
-> Messages in Gmail's Spam folder are auto-deleted after 30 days. Immediate
-> permanent delete in one click would require the Gmail API (OAuth) because
-> "Delete forever" sits behind a Gmail confirmation dialog that the page
-> doesn't expose to extensions.
+> The "Delete" step moves the message to Trash, where Gmail purges it after
+> 30 days. Immediate permanent delete in one click would require the Gmail
+> API (OAuth) because "Delete forever" sits behind a Gmail confirmation
+> dialog that the page doesn't expose to extensions.
 
 ## Installation (unpacked)
 
