@@ -43,7 +43,7 @@
       fab.style.bottom = '24px';
       return;
     }
-    const size = fab.offsetWidth || 48;
+    const size = fab.offsetWidth || 32;
     const maxX = window.innerWidth - size - 4;
     const maxY = window.innerHeight - size - 4;
     const x = Math.max(4, Math.min(pos.x, maxX));
@@ -81,7 +81,7 @@
         moved = true;
         fab.classList.add('ocs-fab--dragging');
       }
-      const size = fab.offsetWidth || 48;
+      const size = fab.offsetWidth || 32;
       const maxX = window.innerWidth - size - 4;
       const maxY = window.innerHeight - size - 4;
       const x = Math.max(4, Math.min(originLeft + dx, maxX));
@@ -300,7 +300,7 @@
     fab.title = 'Mark as Spam & Delete — drag to reposition';
     fab.setAttribute('aria-label', 'Mark as Spam and Delete');
     fab.innerHTML = `
-      <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
         <path d="M12 2L1 21h22L12 2zm1 14h-2v2h2v-2zm0-6h-2v5h2v-5z"/>
       </svg>
     `;
