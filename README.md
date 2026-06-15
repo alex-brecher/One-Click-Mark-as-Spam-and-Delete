@@ -10,10 +10,12 @@ one in the main toolbar and one on each inbox row (visible on hover).
 - When clicked, it fires Gmail's "Report spam" toolbar action and then,
   immediately after, fires Gmail's "Delete" action — the same two clicks
   you'd do by hand to actually get a thread out of the inbox.
+- If Gmail pops the "Spam reported. Also block sender?" confirmation, the
+  extension auto-clicks **Yes, block** so you never have to chase it.
 - Works whether you have a single email open or multiple rows checkbox-selected.
 - Provides an options popup (click the extension icon in Chrome's toolbar) to
-  toggle the auto-delete-after-spam behavior and a "confirm before mark as
-  spam" guard.
+  toggle the auto-delete-after-spam behavior, the auto-block-sender behavior,
+  and a "confirm before mark as spam" guard.
 
 > The "Delete" step moves the message to Trash, where Gmail purges it after
 > 30 days. Immediate permanent delete in one click would require the Gmail

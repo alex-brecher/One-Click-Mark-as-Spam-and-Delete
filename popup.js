@@ -1,5 +1,6 @@
 const DEFAULTS = {
   alsoDelete: true,
+  autoBlockSender: true,
   confirmEachClick: false,
 };
 

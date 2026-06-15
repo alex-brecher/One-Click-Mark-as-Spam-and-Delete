@@ -6,6 +6,7 @@
 
   const DEFAULTS = {
     alsoDelete: true,
+    autoBlockSender: true,
     confirmEachClick: false,
   };
 
@@ -107,6 +108,39 @@
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  async function waitFor(finder, timeoutMs = 1500, intervalMs = 80) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const el = finder();
+      if (el) return el;
+      await sleep(intervalMs);
+    }
+    return null;
+  }
+
+  // Finds Gmail's "Spam reported. Also block sender?" confirmation button.
+  // Matches buttons (HTMLButton or role=button) whose visible text is "Yes, block".
+  function findBlockSenderButton() {
+    const dialogs = document.querySelectorAll(
+      '[role="dialog"], [role="alertdialog"], .a3s, .Kj-JD'
+    );
+    const search = (root) => {
+      const candidates = root.querySelectorAll('button, [role="button"]');
+      for (const el of candidates) {
+        if (!isUsable(el)) continue;
+        const text = (el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        if (text === 'yes, block') return el;
+      }
+      return null;
+    };
+    for (const d of dialogs) {
+      if (!isUsable(d)) continue;
+      const found = search(d);
+      if (found) return found;
+    }
+    return search(document);
+  }
+
   async function spamAndDelete() {
     const spamBtn = findReportSpamButton();
     if (!spamBtn) {
@@ -115,13 +149,32 @@
     }
     nativeClick(spamBtn);
 
-    if (settings.alsoDelete) {
+    // After Report Spam, Gmail sometimes pops a "Spam reported. Also block sender?"
+    // dialog. While that dialog is open, the Delete button is unreachable, so handle
+    // it first. The dialog title confirms the spam action already went through, so
+    // when it appears the email is already in Spam and Delete is a no-op afterward.
+    let dialogHandled = false;
+    if (settings.autoBlockSender) {
+      const blockBtn = await waitFor(findBlockSenderButton, 1200);
+      if (blockBtn) {
+        nativeClick(blockBtn);
+        dialogHandled = true;
+        await sleep(250);
+      }
+    }
+
+    if (!dialogHandled && settings.alsoDelete) {
       await sleep(450);
       const delBtn = findDeleteButton();
       if (delBtn) nativeClick(delBtn);
     }
 
-    showToast(settings.alsoDelete ? 'Marked as spam & deleted' : 'Marked as spam', 'success');
+    const msg = dialogHandled
+      ? 'Marked as spam & sender blocked'
+      : settings.alsoDelete
+      ? 'Marked as spam & deleted'
+      : 'Marked as spam';
+    showToast(msg, 'success');
     return true;
   }
 
