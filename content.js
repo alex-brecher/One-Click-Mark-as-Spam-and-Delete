@@ -143,11 +143,39 @@
     return null;
   }
 
+  // True for any element that lives inside a Gmail email-list row — those rows
+  // expose hover-action buttons with the same aria-labels as the main toolbar
+  // ("Delete", "Report spam", etc.). Acting on them targets that row, not the
+  // selection, which would delete arbitrary nearby emails.
+  function isInsideEmailRow(el) {
+    return Boolean(
+      el.closest('tr.zA') ||
+      el.closest('[role="row"]') ||
+      el.closest('.bqe') ||
+      el.closest('.bAv')
+    );
+  }
+
+  // Picks the first usable element matching one of the selectors that is NOT a
+  // per-row hover action. Use this for any toolbar control whose aria-label is
+  // also used on per-row hover buttons (Delete, Report spam, Archive, ...).
+  function findToolbarButton(selectors) {
+    for (const sel of selectors) {
+      const matches = document.querySelectorAll(sel);
+      for (const el of matches) {
+        if (!isUsable(el)) continue;
+        if (isInsideEmailRow(el)) continue;
+        return el;
+      }
+    }
+    return null;
+  }
+
   // Gmail's "Report spam" toolbar control — try both ARIA labels and Gmail's
   // internal action codes. Works in inbox list (when rows are checked) and in
-  // the open-email view.
+  // the open-email view. Excludes per-row hover buttons.
   function findReportSpamButton() {
-    return findFirstUsable([
+    return findToolbarButton([
       '[aria-label="Report spam"]',
       '[data-tooltip="Report spam"]',
       '[aria-label^="Report spam"]',
@@ -159,19 +187,20 @@
 
   // Gmail's trash-can toolbar control. The aria-label is normally "Delete" but
   // flips to "Delete forever" while viewing a message that already has the Spam
-  // label, so accept both. Excludes "Delete draft" (drafts toolbar).
+  // label, so accept both. Excludes per-row hover Delete buttons — those carry
+  // the same aria-label and would act on the hovered row, not on the selection.
   function findDeleteButton() {
-    const exact = findFirstUsable([
+    const exact = findToolbarButton([
       '[aria-label="Delete"]',
       '[data-tooltip="Delete"]',
     ]);
     if (exact) return exact;
-    const forever = findFirstUsable([
+    const forever = findToolbarButton([
       '[aria-label="Delete forever"]',
       '[data-tooltip="Delete forever"]',
     ]);
     if (forever) return forever;
-    return findFirstUsable(['div[act="10"]', 'div[act="61"]']);
+    return findToolbarButton(['div[act="10"]', 'div[act="61"]']);
   }
 
   // Confirms Gmail's "Delete this message permanently?" alert when the trash
