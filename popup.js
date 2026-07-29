@@ -35,7 +35,16 @@ function bind() {
   }
 }
 
+function bindResetPosition() {
+  const btn = document.getElementById('resetPosition');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    chrome.storage.sync.set({ fabPosition: null }, () => setStatus('Position reset'));
+  });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   load();
   bind();
+  bindResetPosition();
 });

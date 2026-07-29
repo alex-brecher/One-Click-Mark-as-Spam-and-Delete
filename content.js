@@ -208,7 +208,7 @@
   function findDeleteForeverConfirm() {
     const dialogs = document.querySelectorAll('[role="dialog"], [role="alertdialog"]');
     for (const d of dialogs) {
-      if (!isUsable(d)) continue;
+      if (!isUsable(d) || isInsideEmailContent(d)) continue;
       const text = (d.textContent || '').toLowerCase();
       if (!text.includes('permanently') && !text.includes('forever')) continue;
       const buttons = Array.from(d.querySelectorAll('button, [role="button"]'));
@@ -258,7 +258,7 @@
   function findReportSpamInDialog() {
     const dialogs = document.querySelectorAll('[role="dialog"], [role="alertdialog"]');
     for (const d of dialogs) {
-      if (!isUsable(d)) continue;
+      if (!isUsable(d) || isInsideEmailContent(d)) continue;
       const buttons = Array.from(d.querySelectorAll('button, [role="button"]'));
       let reportBtn = null;
       let hasUnsub = false;
@@ -273,35 +273,62 @@
     return null;
   }
 
+  // True when the element sits inside rendered email content. We must never
+  // auto-click anything inside a message body: a malicious email could embed a
+  // fake "Yes, block" / "OK" button and get the extension to click
+  // attacker-controlled markup.
+  function isInsideEmailContent(el) {
+    return Boolean(el.closest('.a3s, .ii, .adn'));
+  }
+
   // Finds Gmail's "Spam reported. Also block sender?" confirmation button.
-  // Matches buttons (HTMLButton or role=button) whose visible text is "Yes, block".
+  // Gmail shows this either as a modal dialog or as a bottom-left snackbar.
+  // Search is restricted to dialog/alert containers only — never the message
+  // body or the document at large (see isInsideEmailContent).
   function findBlockSenderButton() {
-    const dialogs = document.querySelectorAll(
-      '[role="dialog"], [role="alertdialog"], .a3s, .Kj-JD'
+    const containers = document.querySelectorAll(
+      '[role="dialog"], [role="alertdialog"], [role="alert"], .Kj-JD, .bAp'
     );
-    const search = (root) => {
-      const candidates = root.querySelectorAll('button, [role="button"]');
+    for (const c of containers) {
+      if (!isUsable(c) || isInsideEmailContent(c)) continue;
+      const candidates = c.querySelectorAll('button, [role="button"]');
       for (const el of candidates) {
-        if (!isUsable(el)) continue;
+        if (!isUsable(el) || isInsideEmailContent(el)) continue;
         const text = (el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
         if (text === 'yes, block') return el;
       }
-      return null;
-    };
-    for (const d of dialogs) {
-      if (!isUsable(d)) continue;
-      const found = search(d);
-      if (found) return found;
     }
-    return search(document);
+    return null;
   }
 
+  // Perm-id of the conversation currently open in reading view, or null when
+  // in list view. Used to make sure the Delete step never fires on a different
+  // conversation than the one we just reported (e.g. Gmail's auto-advance
+  // setting opens the next email right after Report spam).
+  function getOpenThreadId() {
+    const el = document.querySelector('[data-thread-perm-id]');
+    return el ? el.getAttribute('data-thread-perm-id') : null;
+  }
+
+  let actionInFlight = false;
+
   async function spamAndDelete() {
+    if (actionInFlight) return false;
     const spamBtn = findReportSpamButton();
     if (!spamBtn) {
       showToast('Open an email or select one or more rows first', 'warn');
       return false;
     }
+    actionInFlight = true;
+    try {
+      return await runSpamAndDelete(spamBtn);
+    } finally {
+      actionInFlight = false;
+    }
+  }
+
+  async function runSpamAndDelete(spamBtn) {
+    const threadBefore = getOpenThreadId();
     nativeClick(spamBtn);
 
     // Pre-confirmation dialog: "Report spam or unsubscribe?". Click "Report spam"
@@ -324,23 +351,32 @@
       }
     }
 
+    let deleted = false;
     if (settings.alsoDelete) {
       await sleep(450);
-      const delBtn = findDeleteButton();
-      if (delBtn) {
-        nativeClick(delBtn);
-        // "Delete forever" pops its own "Delete this message permanently?" confirm.
-        const confirmBtn = await waitFor(findDeleteForeverConfirm, 900);
-        if (confirmBtn) {
-          nativeClick(confirmBtn);
-          await sleep(150);
+      // If a conversation was open when we reported spam but a DIFFERENT one is
+      // open now (Gmail auto-advance), do NOT click Delete — it would trash an
+      // unrelated email. Reporting spam already removed the target from the inbox.
+      const threadNow = getOpenThreadId();
+      const advancedToOther = Boolean(threadBefore && threadNow && threadNow !== threadBefore);
+      if (!advancedToOther) {
+        const delBtn = findDeleteButton();
+        if (delBtn) {
+          nativeClick(delBtn);
+          deleted = true;
+          // "Delete forever" pops its own "Delete this message permanently?" confirm.
+          const confirmBtn = await waitFor(findDeleteForeverConfirm, 900);
+          if (confirmBtn) {
+            nativeClick(confirmBtn);
+            await sleep(150);
+          }
         }
       }
     }
 
     const parts = ['Marked as spam'];
     if (blocked) parts.push('sender blocked');
-    if (settings.alsoDelete) parts.push('deleted');
+    if (deleted) parts.push('deleted');
     showToast(parts.join(' & '), 'success');
     return true;
   }
@@ -385,6 +421,16 @@
       if (!document.getElementById(FAB_ID)) injectFab();
     });
     observer.observe(document.body, { childList: true, subtree: false });
+
+    // Re-clamp a custom-positioned FAB into view when the window shrinks.
+    let resizeTimer = null;
+    window.addEventListener('resize', () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        const fab = document.getElementById(FAB_ID);
+        if (fab && settings.fabPosition) applyFabPosition(fab, settings.fabPosition);
+      }, 150);
+    });
   }
 
   if (document.readyState === 'loading') {

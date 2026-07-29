@@ -1,10 +1,9 @@
 {
   "manifest_version": 3,
   "name": "One-Click Mark as Spam",
-  "version": "1.0.0",
-  "description": "Adds a one-click button to report emails as spam and permanently delete them in Gmail.",
+  "version": "1.1.0",
+  "description": "Adds a one-click button to report emails as spam and delete them in Gmail.",
   "permissions": ["storage"],
-  "host_permissions": ["https://mail.google.com/*"],
   "content_scripts": [
     {
       "matches": ["https://mail.google.com/*"],

@@ -80,3 +80,16 @@ footer a:hover {
   font-weight: 500;
   min-height: 1em;
 }
+
+.link-button {
+  padding: 0;
+  border: none;
+  background: none;
+  color: #1a73e8;
+  font: inherit;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  text-decoration: underline;
+}
