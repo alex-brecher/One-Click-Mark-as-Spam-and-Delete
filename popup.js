@@ -1,6 +1,11 @@
 /**
  * Options popup. Mirrors the settings schema used by content.js; every change
  * is written straight to chrome.storage.sync, which the content script watches.
+ *
+ * The keyboard shortcut is a fixed in-page default (Ctrl/Cmd+Shift+S).  Rebound
+ * Chromium commands are NOT relayed (the extension has no service worker and no
+ * broad host permissions), so the popup presents the honest binding rather than
+ * the dynamically-resolved one from chrome.commands.getAll.
  */
 
 const DEFAULTS = {
@@ -73,30 +78,9 @@ function bind() {
       });
     });
   }
-
-  const shortcutLink = document.getElementById('shortcutSettings');
-  if (shortcutLink) {
-    shortcutLink.addEventListener('click', (e) => {
-      e.preventDefault();
-      // chrome:// URLs cannot be opened from an anchor; use the tabs API.
-      chrome.tabs.create({ url: 'chrome://extensions/shortcuts' });
-    });
-  }
-}
-
-/** Shows the shortcut the user actually has bound, not just the suggested one. */
-function showShortcut() {
-  const el = document.getElementById('shortcut');
-  if (!el || !chrome.commands || !chrome.commands.getAll) return;
-  chrome.commands.getAll((commands) => {
-    const command = (commands || []).find((c) => c.name === 'spam-and-delete');
-    if (command && command.shortcut) el.textContent = command.shortcut;
-    else el.textContent = 'Not set';
-  });
 }
 
 document.addEventListener('DOMContentLoaded', () => {
   load();
   bind();
-  showShortcut();
 });

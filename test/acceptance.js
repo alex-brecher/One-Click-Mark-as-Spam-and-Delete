@@ -991,6 +991,201 @@ test('16e. styles.css covers every variant, focus, motion and contrast case', ()
   assert.ok(css.includes('.ocs-theme-dark'), 'dark theme');
 });
 
+// --- 17. Partial toolbar rerender — widget stays under same parent -------
+
+test('17. isWidgetStale() detects widget displaced by partial toolbar rerender', () => {
+  const { api, document, window } = boot(FLAT_TOOLBAR);
+  api.start();
+  assert.strictEqual(api.getPlacementStatus(), 'toolbar');
+
+  const widget = document.getElementById(api.WIDGET_ID);
+  assert.ok(widget, 'widget exists initially');
+
+  // Replace all children in the toolbar (simulates Gmail re-render).
+  const toolbar = document.getElementById('toolbar');
+  toolbar.innerHTML = `
+    <div id="back" role="button" aria-label="Back to Inbox"></div>
+    <div id="archive" role="button" aria-label="Archive"></div>
+  `;
+
+  // Widget was destroyed by innerHTML replacement.
+  assert.strictEqual(document.getElementById(api.WIDGET_ID), null, 'widget destroyed');
+
+  // Dispatch resize — this listener is registered by start().
+  window.dispatchEvent(new window.Event('resize'));
+  return wait(120).then(() => {
+    const reWidget = document.getElementById(api.WIDGET_ID);
+    assert.ok(reWidget, 'widget re-anchored after resize');
+    assert.strictEqual(
+      document.getElementById('back').nextElementSibling, reWidget,
+      'widget is after Back'
+    );
+    assert.strictEqual(
+      reWidget.nextElementSibling, document.getElementById('archive'),
+      'widget is before Archive'
+    );
+    api.destroy();
+  });
+});
+
+test('17b. isWidgetStale() detects displaced widget even under the same parent', () => {
+  // Scenario: Gmail replaces Back/Archive inside the existing toolbar container
+  // but our widget is left under the same parent — only the DOM order is wrong.
+  const { api, document, window } = boot(FLAT_TOOLBAR);
+  api.start();  // registers window/document listeners
+  const widget = document.getElementById(api.WIDGET_ID);
+  const toolbar = document.getElementById('toolbar');
+
+  // Displace the widget after Archive within the same parent.
+  const archive = document.getElementById('archive');
+  toolbar.insertBefore(widget, archive.nextSibling);
+  assert.strictEqual(widget.parentNode, toolbar, 'same parent');
+  assert.strictEqual(
+    Array.from(toolbar.children).indexOf(widget),
+    2, 'widget is last child (after Archive)'
+  );
+
+  // isWidgetStale must detect this even though parentNode matches.
+  assert.strictEqual(api.isWidgetStale(), true, 'stale despite same parent');
+
+  // Trigger via capture-phase click (registered by start).
+  document.body.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  return wait(120).then(() => {
+    const reWidget = document.getElementById(api.WIDGET_ID);
+    assert.ok(reWidget, 'widget present after event');
+    // Check DOM order: back → widget → archive.
+    const back = document.getElementById('back');
+    assert.strictEqual(
+      reWidget.parentNode, toolbar,
+      'widget in toolbar'
+    );
+    assert.strictEqual(
+      back.nextElementSibling, reWidget,
+      'widget is after Back'
+    );
+    assert.strictEqual(
+      reWidget.nextElementSibling, document.getElementById('archive'),
+      'widget is before Archive'
+    );
+    api.destroy();
+  });
+});
+
+// --- 18. Full toolbar container replacement -------------------------------
+
+test('18. widget recovers when the entire toolbar container is replaced', () => {
+  const { api, document, window } = boot(FLAT_TOOLBAR);
+  api.start();
+  assert.ok(document.getElementById(api.WIDGET_ID), 'widget present');
+
+  // Replace the toolbar container element itself.
+  const oldToolbar = document.getElementById('toolbar');
+  const newToolbar = document.createElement('div');
+  newToolbar.setAttribute('gh', 'mtb');
+  newToolbar.setAttribute('class', 'G-atb');
+  newToolbar.id = 'toolbar';
+  newToolbar.innerHTML = `
+    <div id="back" role="button" aria-label="Back to Inbox"></div>
+    <div id="archive" role="button" aria-label="Archive"></div>
+  `;
+  oldToolbar.parentNode.replaceChild(newToolbar, oldToolbar);
+
+  // Widget destroyed with old container.
+  assert.strictEqual(document.getElementById(api.WIDGET_ID), null, 'widget destroyed');
+
+  // Dispatch resize.  The listener is registered by start().
+  window.dispatchEvent(new window.Event('resize'));
+  return wait(120).then(() => {
+    const widget = document.getElementById(api.WIDGET_ID);
+    assert.ok(widget, 'widget re-anchored after toolbar replacement');
+    assert.strictEqual(
+      document.getElementById('back').nextElementSibling, widget,
+      'widget after Back in new toolbar'
+    );
+    // Observer should now be on the new container.
+    const observed = api.observedToolbar();
+    assert.strictEqual(observed, newToolbar, 'observer migrated to new container');
+    assert.ok(observed.isConnected, 'observed container is connected');
+    api.destroy();
+  });
+});
+
+// --- 19. Live theme synchronization on resize -----------------------------
+
+test('19. resize event triggers theme class update on the widget', () => {
+  const { api, document, window } = boot(`
+    <div gh="mtb" id="toolbar" style="background-color: #ffffff">
+      <div id="back" role="button" aria-label="Back to Inbox" data-rect="0,0,40,40"></div>
+      <div id="archive" role="button" aria-label="Archive" data-rect="50,0,40,40"></div>
+    </div>
+  `);
+  api.start();
+  const widget = document.getElementById(api.WIDGET_ID);
+  assert.ok(widget.classList.contains('ocs-theme-light'), 'starts light');
+
+  // Gmail switches toolbar to dark background.
+  document.getElementById('toolbar').style.backgroundColor = 'rgb(32, 33, 36)';
+
+  // Dispatch resize — the non-stale path must call applyPresentationClasses().
+  window.dispatchEvent(new window.Event('resize'));
+  return wait(120).then(() => {
+    assert.ok(widget.classList.contains('ocs-theme-dark'), 'switched to dark');
+    assert.ok(!widget.classList.contains('ocs-theme-light'), 'light class removed');
+    api.destroy();
+  });
+});
+
+// --- 20. Keyboard shortcut — fixed default contract -----------------------
+
+test('20. popup displays the shortcut as a fixed default, not dynamically resolved', () => {
+  const dom = new JSDOM(POPUP_HTML, { url: 'chrome-extension://test/popup.html', runScripts: 'outside-only' });
+  const { window } = dom;
+  installLayout(window);
+  installMatchMedia(window, {});
+  window.chrome = makeChrome({}).api;
+  // Override commands.getAll — if the popup calls it, this will record the call.
+  let getAllCalled = false;
+  window.chrome.commands = {
+    getAll(cb) {
+      getAllCalled = true;
+      cb([{ name: 'spam-and-delete', shortcut: 'Alt+Z' }]);
+    },
+  };
+  window.eval(POPUP_JS);
+  window.document.dispatchEvent(new window.Event('DOMContentLoaded'));
+
+  const shortcutEl = window.document.getElementById('shortcut');
+  assert.ok(shortcutEl, 'shortcut element exists');
+
+  // The shortcut display should NOT be resolved from commands.getAll — it
+  // should show the fixed default, because rebound commands don't work
+  // without a service-worker relay.
+  assert.strictEqual(
+    getAllCalled, false,
+    'popup must not call commands.getAll — shortcut is fixed'
+  );
+  assert.strictEqual(shortcutEl.textContent, 'Ctrl+Shift+S');
+  assert.ok(
+    !shortcutEl.closest('p').textContent.includes('chrome://extensions/shortcuts'),
+    'no link to chrome://extensions/shortcuts since rebinding is ineffective'
+  );
+});
+
+test('20b. content.js isShortcutEvent is the sole authoritative check', () => {
+  const { api } = boot(FLAT_TOOLBAR);
+  // The only binding is the hardcoded keydown match.
+  assert.strictEqual(api.isShortcutEvent({ key: 'S', shiftKey: true, ctrlKey: true }), true);
+  assert.strictEqual(api.isShortcutEvent({ key: 's', shiftKey: true, metaKey: true }), true);
+
+  // Rebound keys like Alt+Z do NOT work.
+  assert.strictEqual(api.isShortcutEvent({ key: 'z', altKey: true }), false);
+  assert.strictEqual(api.isShortcutEvent({ key: 'z', altKey: true, shiftKey: true }), false);
+
+  // No chrome.commands.onCommand listener exists in content.js.
+  assert.ok(!CONTENT_JS.includes('chrome.commands.onCommand'), 'no onCommand listener');
+  assert.ok(!CONTENT_JS.includes('commands.onCommand'), 'no commands relay');
+});
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------

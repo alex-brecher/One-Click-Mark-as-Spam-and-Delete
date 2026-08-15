@@ -89,13 +89,17 @@
     <section class="group" aria-labelledby="shortcut-heading">
       <h2 class="group__heading" id="shortcut-heading">Keyboard shortcut</h2>
       <p class="shortcut">
-        <kbd id="shortcut">Ctrl+Shift+S</kbd>
+        <kbd id="shortcut">Ctrl+Shift+S</kbd> <span class="shortcut__hint">or</span> <kbd>Cmd+Shift+S</kbd>
         <span class="shortcut__hint">while Gmail is focused</span>
       </p>
       <p class="hint">
-        Tab to the widget and press <kbd>Enter</kbd> or <kbd>Space</kbd> to fire it;
-        hold <kbd>Ctrl</kbd> with <kbd>←</kbd>/<kbd>→</kbd> to move it along the toolbar.
-        Change the shortcut at <a href="#" id="shortcutSettings">chrome://extensions/shortcuts</a>.
+        This is a fixed in-page shortcut — Chromium&rsquo;s <code>commands</code> API
+        is not available without a service worker or broad host permissions, so
+        rebinding the shortcut in <code>chrome://extensions/shortcuts</code> has
+        no effect on this extension.
+        Tab to the widget and press <kbd>Enter</kbd> or <kbd>Space</kbd> to
+        fire it; hold <kbd>Ctrl</kbd> with <kbd>←</kbd>/<kbd>→</kbd> to move
+        it along the toolbar.
       </p>
     </section>
 

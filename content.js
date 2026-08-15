@@ -752,7 +752,15 @@
     }
     const point = resolveInsertionPoint(findBackButton(), findArchiveButton());
     if (!point) return true;
-    return widget.parentNode !== point.parent;
+    if (widget.parentNode !== point.parent) return true;
+    // Partial toolbar rerender: Gmail replaces Back/Archive controls inside
+    // the same parent but the widget stays under the same parent.  Check the
+    // actual DOM order — the widget must still precede the Archive reference.
+    if (point.before && point.before !== widget) {
+      const siblings = Array.from(point.parent.children);
+      if (siblings.indexOf(point.before) < siblings.indexOf(widget)) return true;
+    }
+    return false;
   }
 
   /** Re-resolves Back/Archive after a Gmail re-render and re-inserts the widget. */
@@ -764,8 +772,16 @@
   }
 
   const scheduleReAnchor = rafBatched(() => {
+    // Defense-in-depth: if the observed toolbar container was removed,
+    // re-observe before any staleness check.
+    if (observedToolbar && !observedToolbar.isConnected) {
+      observeToolbar();
+    }
     if (isWidgetStale()) reAnchorWidget();
-    else updateWidgetState();
+    else {
+      applyPresentationClasses(getWidget());
+      updateWidgetState();
+    }
   });
 
   // ---------------------------------------------------------------------------
@@ -1250,7 +1266,16 @@
     if (toolbarObserver && observedToolbar === container) return true;
     if (toolbarObserver) toolbarObserver.disconnect();
     observedToolbar = container;
-    toolbarObserver = new MutationObserver(scheduleReAnchor);
+    toolbarObserver = new MutationObserver(() => {
+      // If the container itself was removed from the DOM (full replace),
+      // re-observe the new container and re-anchor immediately.
+      if (observedToolbar && !observedToolbar.isConnected) {
+        observeToolbar();
+        reAnchorWidget();
+        return;
+      }
+      scheduleReAnchor();
+    });
     toolbarObserver.observe(container, { childList: true, subtree: true });
     return true;
   }
@@ -1391,6 +1416,7 @@
     WIDGET_ID,
     WIDGET_STYLES,
     PLACEMENT_MODES,
+    observedToolbar: () => observedToolbar,
     start,
     destroy,
     getSettings: () => ({ ...settings }),
