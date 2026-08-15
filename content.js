@@ -61,6 +61,7 @@
   let settings = { ...DEFAULTS };
   let anchorParent = null;      // element the toolbar widget is inserted into
   let toolbarObserver = null;   // scoped observer on the toolbar container
+  let deathObserver = null;     // scoped observer on the toolbar's parent (childList only)
   let bootstrapObserver = null; // temporary observer used until first anchor
   let observedToolbar = null;
   let placementStatus = 'pending';
@@ -1263,20 +1264,36 @@
   function observeToolbar() {
     const container = findToolbarContainer();
     if (!container) return false;
-    if (toolbarObserver && observedToolbar === container) return true;
+    if (toolbarObserver && deathObserver && observedToolbar === container) return true;
     if (toolbarObserver) toolbarObserver.disconnect();
+    if (deathObserver) deathObserver.disconnect();
     observedToolbar = container;
+
+    // Main observer on the toolbar itself — fires when children are added/removed
+    // inside the toolbar (e.g. Gmail replaces Back/Archive controls).
     toolbarObserver = new MutationObserver(() => {
-      // If the container itself was removed from the DOM (full replace),
-      // re-observe the new container and re-anchor immediately.
-      if (observedToolbar && !observedToolbar.isConnected) {
-        observeToolbar();
-        reAnchorWidget();
-        return;
-      }
       scheduleReAnchor();
     });
     toolbarObserver.observe(container, { childList: true, subtree: true });
+
+    // Death-watch observer on the toolbar's direct parent — fires when the
+    // toolbar container itself is removed or replaced (childList on the parent
+    // catches removals, while childList on the toolbar does not).
+    if (container.parentNode) {
+      deathObserver = new MutationObserver((records) => {
+        for (const record of records) {
+          for (const removed of record.removedNodes) {
+            if (removed === container || removed.contains(container)) {
+              observeToolbar();
+              reAnchorWidget();
+              return;
+            }
+          }
+        }
+      });
+      deathObserver.observe(container.parentNode, { childList: true });
+    }
+
     return true;
   }
 
@@ -1380,6 +1397,8 @@
   function destroy() {
     if (toolbarObserver) toolbarObserver.disconnect();
     toolbarObserver = null;
+    if (deathObserver) deathObserver.disconnect();
+    deathObserver = null;
     observedToolbar = null;
     stopBootstrapObserver();
     cancelRaf(rafHandle);

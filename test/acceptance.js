@@ -357,14 +357,14 @@ test('5b. a widget moved out of the toolbar is detected as stale', () => {
   assert.strictEqual(document.getElementById('back').nextElementSibling, document.getElementById(api.WIDGET_ID));
 });
 
-test('5c. the MutationObserver is scoped to the toolbar, not document.body', () => {
+test('5c. observers are scoped to the toolbar and its parent, not document.body', () => {
   const { api, document, window } = boot(FLAT_TOOLBAR);
   const observed = [];
   const NativeObserver = window.MutationObserver;
   window.MutationObserver = function (cb) {
     const inner = new NativeObserver(cb);
     return {
-      observe(target, opts) { observed.push(target); inner.observe(target, opts); },
+      observe(target, opts) { observed.push({ target, opts }); inner.observe(target, opts); },
       disconnect() { inner.disconnect(); },
       takeRecords() { return inner.takeRecords(); },
     };
@@ -372,10 +372,24 @@ test('5c. the MutationObserver is scoped to the toolbar, not document.body', () 
   api.injectWidget();
   assert.strictEqual(api.observeToolbar(), true);
   assert.ok(observed.length >= 1, 'an observer was installed');
-  for (const target of observed) {
-    assert.notStrictEqual(target, document.body, 'never observes document.body');
-    assert.strictEqual(target, document.getElementById('toolbar'));
-  }
+  const toolbar = document.getElementById('toolbar');
+  assert.ok(toolbar, 'toolbar exists');
+
+  // The primary (childList+subtree) observer must be on the toolbar itself,
+  // never on document.body.  The death-watch (childList only) observer is on
+  // the toolbar's parent, which in the test fixture is document.body —
+  // that is acceptable because it watches only childList with no subtree.
+  const mainObs = observed.find(o => o.opts.childList === true && o.opts.subtree === true);
+  const deathObs = observed.find(o => o.opts.childList === true && !o.opts.subtree);
+
+  assert.ok(mainObs, 'main toolbar observer present');
+  assert.strictEqual(mainObs.target, toolbar, 'main observer is on the toolbar');
+  assert.strictEqual(mainObs.target, document.getElementById('toolbar'));
+  assert.notStrictEqual(mainObs.target, document.body, 'main observer never on document.body');
+
+  assert.ok(deathObs, 'death-watch observer present');
+  assert.strictEqual(deathObs.target, toolbar.parentNode, 'death observer on toolbar parent');
+  assert.ok(!deathObs.opts.subtree, 'death observer has no subtree');
 });
 
 // --- 6. Fallback -----------------------------------------------------------
@@ -1073,7 +1087,7 @@ test('17b. isWidgetStale() detects displaced widget even under the same parent',
 
 // --- 18. Full toolbar container replacement -------------------------------
 
-test('18. widget recovers when the entire toolbar container is replaced', () => {
+test('18. widget recovers when the entire toolbar container is replaced — no other event needed', async () => {
   const { api, document, window } = boot(FLAT_TOOLBAR);
   api.start();
   assert.ok(document.getElementById(api.WIDGET_ID), 'widget present');
@@ -1093,21 +1107,21 @@ test('18. widget recovers when the entire toolbar container is replaced', () => 
   // Widget destroyed with old container.
   assert.strictEqual(document.getElementById(api.WIDGET_ID), null, 'widget destroyed');
 
-  // Dispatch resize.  The listener is registered by start().
-  window.dispatchEvent(new window.Event('resize'));
-  return wait(120).then(() => {
-    const widget = document.getElementById(api.WIDGET_ID);
-    assert.ok(widget, 'widget re-anchored after toolbar replacement');
-    assert.strictEqual(
-      document.getElementById('back').nextElementSibling, widget,
-      'widget after Back in new toolbar'
-    );
-    // Observer should now be on the new container.
-    const observed = api.observedToolbar();
-    assert.strictEqual(observed, newToolbar, 'observer migrated to new container');
-    assert.ok(observed.isConnected, 'observed container is connected');
-    api.destroy();
-  });
+  // The death observer fires automatically when the parent's childList mutation
+  // removes the old toolbar.  Yield to let the microtask drain.
+  await wait(20);
+
+  const widget = document.getElementById(api.WIDGET_ID);
+  assert.ok(widget, 'widget re-anchored after toolbar replacement (no resize/click needed)');
+  assert.strictEqual(
+    document.getElementById('back').nextElementSibling, widget,
+    'widget after Back in new toolbar'
+  );
+  // Observer should now be on the new container.
+  const observed = api.observedToolbar();
+  assert.strictEqual(observed, newToolbar, 'observer migrated to new container');
+  assert.ok(observed.isConnected, 'observed container is connected');
+  api.destroy();
 });
 
 // --- 19. Live theme synchronization on resize -----------------------------
