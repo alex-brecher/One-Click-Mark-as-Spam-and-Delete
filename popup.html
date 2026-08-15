@@ -11,7 +11,9 @@
       <p class="subtitle">Settings</p>
     </header>
 
-    <section class="options">
+    <section class="group" aria-labelledby="behaviour-heading">
+      <h2 class="group__heading" id="behaviour-heading">Behaviour</h2>
+
       <label class="option">
         <input type="checkbox" id="alsoDelete" />
         <span>Also click Delete after marking as spam (recommended — guarantees the email leaves the inbox)</span>
@@ -24,23 +26,90 @@
 
       <label class="option">
         <input type="checkbox" id="confirmEachClick" />
-        <span>Confirm before marking as spam</span>
+        <span>Ask for confirmation before each action</span>
       </label>
+    </section>
 
-      <label class="option option--info">
-        <span class="hint">
-          A small red circle floats over every Gmail page — <strong>drag it</strong>
-          anywhere you want and the position sticks. Open an email or check one or
-          more rows, then click the circle: it fires Gmail's Report Spam, dismisses
-          any confirm dialog, and clicks Delete in sequence — the same workflow
-          you'd do by hand.
-        </span>
-      </label>
+    <section class="group" aria-labelledby="placement-heading">
+      <h2 class="group__heading" id="placement-heading">Placement</h2>
+
+      <div class="radios" role="radiogroup" aria-labelledby="placement-heading">
+        <label class="option">
+          <input type="radio" name="placementMode" value="toolbar" />
+          <span>
+            <strong>Gmail toolbar</strong>
+            <em>Sits between Back and Archive</em>
+          </span>
+        </label>
+        <label class="option">
+          <input type="radio" name="placementMode" value="floating" />
+          <span>
+            <strong>Floating button</strong>
+            <em>Drag it anywhere on the page</em>
+          </span>
+        </label>
+      </div>
+    </section>
+
+    <section class="group" aria-labelledby="style-heading">
+      <h2 class="group__heading" id="style-heading">Widget style</h2>
+
+      <div class="radios" role="radiogroup" aria-labelledby="style-heading">
+        <label class="option">
+          <input type="radio" name="widgetStyle" value="gmail-icon" />
+          <span>
+            <strong>Gmail icon</strong>
+            <em>Grey toolbar icon that blends in</em>
+          </span>
+        </label>
+        <label class="option">
+          <input type="radio" name="widgetStyle" value="emphasized" />
+          <span>
+            <strong>Emphasized</strong>
+            <em>Red destructive icon button</em>
+          </span>
+        </label>
+        <label class="option">
+          <input type="radio" name="widgetStyle" value="compact" />
+          <span>
+            <strong>Compact</strong>
+            <em>"Spam" label with a small icon</em>
+          </span>
+        </label>
+        <label class="option">
+          <input type="radio" name="widgetStyle" value="floating" />
+          <span>
+            <strong>Classic floating</strong>
+            <em>The original round red button</em>
+          </span>
+        </label>
+      </div>
+    </section>
+
+    <section class="group" aria-labelledby="shortcut-heading">
+      <h2 class="group__heading" id="shortcut-heading">Keyboard shortcut</h2>
+      <p class="shortcut">
+        <kbd id="shortcut">Ctrl+Shift+S</kbd>
+        <span class="shortcut__hint">while Gmail is focused</span>
+      </p>
+      <p class="hint">
+        Tab to the widget and press <kbd>Enter</kbd> or <kbd>Space</kbd> to fire it;
+        hold <kbd>Ctrl</kbd> with <kbd>←</kbd>/<kbd>→</kbd> to move it along the toolbar.
+        Change the shortcut at <a href="#" id="shortcutSettings">chrome://extensions/shortcuts</a>.
+      </p>
+    </section>
+
+    <section class="group">
+      <p class="hint">
+        Open an email or check one or more rows, then fire the widget: it runs
+        Gmail's Report Spam, dismisses the follow-up dialogs, and clicks Delete —
+        the same workflow you'd do by hand.
+      </p>
     </section>
 
     <footer>
       <span id="status" class="status" aria-live="polite"></span>
-      <button type="button" id="resetPosition" class="link-button">Reset button position</button>
+      <button type="button" id="resetDefaults" class="link-button">Reset to recommended defaults</button>
       <a href="https://mail.google.com/" target="_blank" rel="noopener">Open Gmail</a>
     </footer>
 
