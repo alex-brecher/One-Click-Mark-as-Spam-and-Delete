@@ -60,10 +60,12 @@ widget style always implies floating placement.
 | `Enter` / `Space` | Activate it. |
 | `Ctrl+←` / `Ctrl+→` | Move it one slot left/right along the toolbar. |
 
-The shortcut is declared in the manifest's `commands` key and can be rebound at
-`chrome://extensions/shortcuts`; the popup shows whatever you actually have
-bound. The content script also matches the same chord in-page so it works
-without a background service worker.
+The shortcut is a fixed in-page listener — it cannot be rebound at
+`chrome://extensions/shortcuts`. Because the extension has no background
+service worker, Chrome's command relay never reaches the content script;
+the chord (`Ctrl+Shift+S` / `Cmd+Shift+S`) is matched directly in the
+content script's `keydown` handler. The popup displays the fixed binding,
+not a dynamically-resolved one.
 
 ## Settings
 
@@ -146,10 +148,14 @@ Schema stored in `chrome.storage.sync`:
 - Auto-confirm searches only `role="dialog"` / `role="alertdialog"` /
   `role="alert"` containers and never rendered email content, so a malicious
   email can't plant a fake button for the extension to click.
-- **Performance**: no polling and no `setInterval`. A `MutationObserver` scoped
-  to the toolbar container (never `document.body`) triggers a
-  `requestAnimationFrame`-batched re-anchor; a one-shot bootstrap observer
-  catches Gmail's first paint and disconnects itself immediately. Injection is
+- **Performance**: no polling and no `setInterval`. Two `MutationObserver`s
+  are scoped tightly: one on the toolbar container itself (`childList +
+  subtree`) that triggers a `requestAnimationFrame`-batched re-anchor when
+  toolbar children change; a second **death-watch** observer on the toolbar's
+  direct parent (`childList` only, no subtree) that fires when the toolbar
+  container itself is removed or replaced (full-container replacement, which
+  the toolbar-scoped observer cannot detect). A one-shot bootstrap observer
+  catches Gmail's first paint and disconnects immediately. Injection is
   idempotent, listeners are registered once, and everything is torn down on
   `pagehide` / `beforeunload`.
 - Permissions: `storage` only. No network calls, no analytics, no host

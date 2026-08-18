@@ -1200,6 +1200,31 @@ test('20b. content.js isShortcutEvent is the sole authoritative check', () => {
   assert.ok(!CONTENT_JS.includes('commands.onCommand'), 'no commands relay');
 });
 
+test('20c. README does not advertise chrome://extensions/shortcuts rebinding', () => {
+  const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+  // Collapse line wrapping so the stale claim is matchable as one phrase.
+  const flat = readme.replace(/\s+/g, ' ');
+
+  // The corrected text mentions the URL only to say rebinding does NOT work,
+  // so assert on the stale claim rather than on the bare URL.
+  assert.ok(
+    !flat.includes('can be rebound at `chrome://extensions/shortcuts`'),
+    'README must not claim the shortcut can be rebound at chrome://extensions/shortcuts'
+  );
+  assert.ok(
+    flat.includes('cannot be rebound at `chrome://extensions/shortcuts`'),
+    'README must state the shortcut cannot be rebound'
+  );
+  assert.ok(
+    readme.includes('fixed in-page listener'),
+    'README must describe the shortcut as a fixed in-page listener'
+  );
+  assert.ok(
+    readme.includes('death-watch'),
+    'README must document the death-watch observer on the toolbar parent'
+  );
+});
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
