@@ -62,7 +62,7 @@ https://github.com/alex-brecher/One-Click-Mark-as-Spam-and-Delete/issues
 
 ## Privacy policy URL
 
-https://github.com/alex-brecher/One-Click-Mark-as-Spam-and-Delete/blob/main/PRIVACY_POLICY.md
+https://github.com/alex-brecher/One-Click-Mark-as-Spam-and-Delete/blob/store-submission-v2/PRIVACY_POLICY.md
 
 ## Single purpose
 
