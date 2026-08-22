@@ -48,6 +48,10 @@ PRIVACY
 • Local processing in the Gmail tab
 • Chrome sync stores only extension settings
 
+OPEN SOURCE
+
+• Review the source code or report an issue at https://github.com/alex-brecher/One-Click-Mark-as-Spam-and-Delete
+
 The extension uses Gmail’s visible controls. It does not use the Gmail API or send message content to a server.
 
 One-Click Spam & Delete is not affiliated with or endorsed by Google. Gmail is a trademark of Google LLC.
