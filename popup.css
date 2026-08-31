@@ -92,6 +92,7 @@ header h1 {
 .shortcut {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin: 0 0 8px;
 }

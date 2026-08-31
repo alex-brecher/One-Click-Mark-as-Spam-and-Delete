@@ -18,8 +18,8 @@ Gmail's primary toolbar, between **Back** and **Archive**.
   - "Delete this message permanently?" (when the message is already in
     Spam/Trash) — confirms the delete.
 - Works whether you have a single email open or several rows checkbox-selected.
-- If Gmail's auto-advance opens the next conversation right after Report spam,
-  the Delete step is skipped so it never trashes an unrelated email.
+- Before Delete, the extension makes sure that the original conversation or
+  row selection is still active. It skips Delete if Gmail changes the target.
 - Shows a result toast with an **Undo** button that hands off to Gmail's own
   undo. Auto-dismisses after 5 seconds.
 - Greys itself out, with an explanatory tooltip, when there is nothing selected
@@ -60,12 +60,10 @@ widget style always implies floating placement.
 | `Enter` / `Space` | Activate it. |
 | `Ctrl+←` / `Ctrl+→` | Move it one slot left/right along the toolbar. |
 
-The shortcut is a fixed in-page listener — it cannot be rebound at
-`chrome://extensions/shortcuts`. Because the extension has no background
-service worker, Chrome's command relay never reaches the content script;
-the chord (`Ctrl+Shift+S` / `Cmd+Shift+S`) is matched directly in the
-content script's `keydown` handler. The popup displays the fixed binding,
-not a dynamically-resolved one.
+Chrome registers the shortcut with the `commands` API. A Manifest V3 service
+worker sends the command to the active Gmail tab. Change the shortcut at
+`chrome://extensions/shortcuts`. The popup shows the current shortcut. The
+command does not run while you type in Gmail.
 
 ## Settings
 
@@ -126,6 +124,7 @@ Schema stored in `chrome.storage.sync`:
 | File | Purpose |
 | --- | --- |
 | `manifest.json` | Manifest V3 declaration, including the `commands` shortcut. |
+| `background.js` | Service worker that sends the Chrome command to Gmail. |
 | `content.js` | Single-file IIFE: placement, widget styles, action, toast, dialog. |
 | `styles.css` | All four widget styles, both placements, toast and dialog. |
 | `popup.html` / `popup.css` / `popup.js` | Settings popup. |
@@ -178,7 +177,7 @@ after a toolbar re-render, observer scoping, the floating fallback, all four
 widget styles, horizontal-only drag and keyboard slot moves, storage
 get/set/reset (including the popup), theme detection, reduced motion, the
 `isInsideEmailContent` / `isInsideEmailRow` / `isUsable` safety guards, dialog
-isolation, the thread-id auto-advance guard, and idempotent injection.
+isolation, target-identity guards, the command relay, and idempotent injection.
 
 ## Regenerating icons
 

@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>One-Click Spam &amp; Delete — Settings</title>
+    <title>One-Click Spam &amp; Delete: Settings</title>
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
@@ -89,17 +89,18 @@
     <section class="group" aria-labelledby="shortcut-heading">
       <h2 class="group__heading" id="shortcut-heading">Keyboard shortcut</h2>
       <p class="shortcut">
-        <kbd id="shortcut">Ctrl+Shift+S</kbd> <span class="shortcut__hint">or</span> <kbd>Cmd+Shift+S</kbd>
-        <span class="shortcut__hint">while Gmail is focused</span>
+        <kbd id="shortcut">Loading...</kbd>
+        <span class="shortcut__hint" id="shortcutState">Use this shortcut while Gmail is focused.</span>
       </p>
       <p class="hint">
-        This is a fixed in-page shortcut — Chromium&rsquo;s <code>commands</code> API
-        is not available without a service worker or broad host permissions, so
-        rebinding the shortcut in <code>chrome://extensions/shortcuts</code> has
-        no effect on this extension.
-        Tab to the widget and press <kbd>Enter</kbd> or <kbd>Space</kbd> to
-        fire it; hold <kbd>Ctrl</kbd> with <kbd>←</kbd>/<kbd>→</kbd> to move
-        it along the toolbar.
+        Chrome manages this shortcut. You can change it on the Chrome extension
+        shortcuts page. The command does not run while you type in Gmail.
+      </p>
+      <button type="button" id="customizeShortcut" class="link-button">Change shortcut</button>
+      <p class="hint">
+        Press <kbd>Tab</kbd> to focus the widget. Press <kbd>Enter</kbd> or
+        <kbd>Space</kbd> to run it. Hold <kbd>Ctrl</kbd> and press
+        <kbd>←</kbd> or <kbd>→</kbd> to move the toolbar widget.
       </p>
     </section>
 

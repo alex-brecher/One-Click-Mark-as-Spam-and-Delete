@@ -67,7 +67,9 @@
   let placementStatus = 'pending';
   let fallbackNoticeShown = false;
   let actionInFlight = false;
+  let actionRequestInFlight = false;
   let started = false;
+  let lifecycleToken = 0;
   let rafHandle = null;
   let saveTimer = null;
   const timers = new Set();
@@ -145,12 +147,16 @@
   // ---------------------------------------------------------------------------
 
   function normalizeSettings(raw) {
-    const next = { ...DEFAULTS, ...(raw || {}) };
+    const source = raw && typeof raw === 'object' ? raw : {};
+    const next = { ...DEFAULTS };
+    for (const key of Object.keys(DEFAULTS)) {
+      if (Object.prototype.hasOwnProperty.call(source, key)) next[key] = source[key];
+    }
     if (!WIDGET_STYLES.includes(next.widgetStyle)) next.widgetStyle = DEFAULTS.widgetStyle;
     if (!PLACEMENT_MODES.includes(next.placementMode)) next.placementMode = DEFAULTS.placementMode;
-    next.alsoDelete = Boolean(next.alsoDelete);
-    next.autoBlockSender = Boolean(next.autoBlockSender);
-    next.confirmEachClick = Boolean(next.confirmEachClick);
+    for (const key of ['alsoDelete', 'autoBlockSender', 'confirmEachClick']) {
+      if (typeof next[key] !== 'boolean') next[key] = DEFAULTS[key];
+    }
     next.fabPosition = normalizePosition(next.fabPosition);
     return next;
   }
@@ -160,7 +166,10 @@
     if (typeof pos.slot === 'number' && Number.isFinite(pos.slot)) {
       return { slot: Math.max(0, Math.round(pos.slot)) };
     }
-    if (typeof pos.x === 'number' && typeof pos.y === 'number') {
+    if (
+      typeof pos.x === 'number' && Number.isFinite(pos.x) &&
+      typeof pos.y === 'number' && Number.isFinite(pos.y)
+    ) {
       return { x: pos.x, y: pos.y };
     }
     return null;
@@ -407,6 +416,13 @@
     return out;
   }
 
+  function blockingDialogContainers() {
+    return safeDialogContainers().filter((container) => {
+      const role = container.getAttribute('role');
+      return role === 'dialog' || role === 'alertdialog';
+    });
+  }
+
   function buttonText(el) {
     return (el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
   }
@@ -454,22 +470,60 @@
   // Search is restricted to dialog/alert containers only — never the message
   // body or the document at large (see isInsideEmailContent).
   function findBlockSenderButton() {
-    for (const c of safeDialogContainers()) {
-      for (const el of c.querySelectorAll('button, [role="button"]')) {
+    const prompt = findBlockSenderPrompt();
+    return prompt ? prompt.accept : null;
+  }
+
+  /**
+   * Finds Gmail's block-sender prompt and its safe response controls. The
+   * dismiss control is accepted only when the same container has "Yes, block".
+   */
+  function findBlockSenderPrompt() {
+    const dismissLabels = new Set(['no, thanks', 'not now', 'cancel', 'no']);
+    for (const container of safeDialogContainers()) {
+      let accept = null;
+      let dismiss = null;
+      for (const el of container.querySelectorAll('button, [role="button"]')) {
         if (!isUsable(el) || isInsideEmailContent(el)) continue;
-        if (buttonText(el) === 'yes, block') return el;
+        const text = buttonText(el);
+        if (text === 'yes, block') accept = el;
+        else if (dismissLabels.has(text)) dismiss = el;
+      }
+      if (accept) {
+        const role = container.getAttribute('role');
+        return {
+          container,
+          accept,
+          dismiss,
+          blocking: role === 'dialog' || role === 'alertdialog',
+        };
       }
     }
     return null;
   }
 
+  function findBlockSenderDismissButton() {
+    const prompt = findBlockSenderPrompt();
+    return prompt ? prompt.dismiss : null;
+  }
+
   /** Gmail's own "Undo" affordance in its post-action snackbar. */
-  function findGmailUndoButton() {
-    for (const c of safeDialogContainers()) {
+  function gmailUndoButtons() {
+    const out = [];
+    const containers = safeDialogContainers();
+    for (const c of containers) {
       for (const el of c.querySelectorAll('button, [role="button"], a[role="link"], span[role="link"]')) {
         if (!isUsable(el) || isInsideEmailContent(el)) continue;
-        if (buttonText(el) === 'undo') return el;
+        if (buttonText(el) === 'undo') out.push(el);
       }
+    }
+    return out;
+  }
+
+  function findGmailUndoButton(excluded) {
+    const buttons = gmailUndoButtons();
+    for (let i = buttons.length - 1; i >= 0; i -= 1) {
+      if (!excluded || !excluded.has(buttons[i])) return buttons[i];
     }
     return null;
   }
@@ -479,8 +533,80 @@
   // conversation than the one we just reported (e.g. Gmail's auto-advance
   // setting opens the next email right after Report spam).
   function getOpenThreadId() {
-    const el = document.querySelector('[data-thread-perm-id]');
-    return el ? el.getAttribute('data-thread-perm-id') : null;
+    for (const el of document.querySelectorAll('[data-thread-perm-id]')) {
+      if (!isUsable(el)) continue;
+      const id = el.getAttribute('data-thread-perm-id');
+      if (id) return id;
+    }
+    return null;
+  }
+
+  /** Stable Gmail thread key for a selected list row, when Gmail exposes one. */
+  function getRowThreadId(row) {
+    if (!row || !row.getAttribute) return null;
+    for (const name of ['data-legacy-thread-id', 'data-thread-id', 'data-legacy-message-id']) {
+      const value = row.getAttribute(name);
+      if (value) return value;
+    }
+    const jslog = row.getAttribute('jslog') || '';
+    const match = /#thread-[a-z]+:\d+/i.exec(jslog);
+    return match ? match[0] : null;
+  }
+
+  function selectedRows() {
+    const rows = [];
+    const seen = new Set();
+    for (const box of document.querySelectorAll('[role="checkbox"][aria-checked="true"]')) {
+      if (!isUsable(box) || !isInsideEmailRow(box)) continue;
+      const row = box.closest('tr.zA, [role="row"], .bqe, .bAv');
+      if (!row || seen.has(row)) continue;
+      seen.add(row);
+      rows.push(row);
+    }
+    return rows;
+  }
+
+  /**
+   * Captures the exact Gmail target before Report spam. Delete is allowed only
+   * while this same open thread or row selection remains active.
+   */
+  function captureActionTarget() {
+    const threadId = getOpenThreadId();
+    if (threadId) return { kind: 'thread', threadId };
+
+    const rows = selectedRows();
+    if (!rows.length) return null;
+    const ids = rows.map(getRowThreadId);
+    return {
+      kind: 'selection',
+      ids: ids.every(Boolean) ? ids.slice().sort() : null,
+      rows,
+    };
+  }
+
+  function sameActionTarget(before) {
+    if (!before) return false;
+    if (before.kind === 'thread') return getOpenThreadId() === before.threadId;
+    if (before.kind !== 'selection') return false;
+
+    const rows = selectedRows();
+    if (rows.length !== before.rows.length) return false;
+    const ids = rows.map(getRowThreadId);
+    if (before.ids && ids.every(Boolean)) {
+      const sorted = ids.slice().sort();
+      return before.ids.every((id, index) => id === sorted[index]);
+    }
+    return rows.every((row, index) => row === before.rows[index]);
+  }
+
+  function actionTargetChangeReason(before) {
+    if (!before) return 'the original target could not be identified';
+    if (before.kind === 'thread') {
+      const now = getOpenThreadId();
+      if (!now) return 'the original conversation is no longer open';
+      return 'Gmail moved to another conversation';
+    }
+    return 'the selected messages changed';
   }
 
   /**
@@ -495,10 +621,7 @@
   function hasActionableTarget() {
     if (findReportSpamButton()) return true;
     if (getOpenThreadId()) return true;
-    for (const box of document.querySelectorAll('[role="checkbox"][aria-checked="true"]')) {
-      if (isUsable(box)) return true;
-    }
-    return false;
+    return selectedRows().length > 0;
   }
 
   // ---------------------------------------------------------------------------
@@ -754,6 +877,12 @@
     const point = resolveInsertionPoint(findBackButton(), findArchiveButton());
     if (!point) return true;
     if (widget.parentNode !== point.parent) return true;
+    // A saved slot represents an intentional user move. Do not force the
+    // default Back -> widget -> Archive order after a drag or keyboard move.
+    if (settings.fabPosition && typeof settings.fabPosition.slot === 'number') {
+      const expected = Math.max(0, Math.min(settings.fabPosition.slot, toolbarSlots().length));
+      return currentSlotIndex() !== expected;
+    }
     // Partial toolbar rerender: Gmail replaces Back/Archive controls inside
     // the same parent but the widget stays under the same parent.  Check the
     // actual DOM order — the widget must still precede the Archive reference.
@@ -768,7 +897,12 @@
   function reAnchorWidget() {
     if (!document.body) return false;
     const result = injectWidget();
-    observeToolbar();
+    const observing = observeToolbar();
+    if (effectivePlacement() === 'toolbar' && placementStatus !== 'toolbar' && !observing) {
+      startBootstrapObserver();
+    } else if (placementStatus === 'toolbar') {
+      stopBootstrapObserver();
+    }
     return result;
   }
 
@@ -842,7 +976,10 @@
     if (before) widget.parentNode.insertBefore(widget, before);
     else widget.parentNode.appendChild(widget);
     const actual = currentSlotIndex();
-    if (save) persistDebounced({ fabPosition: { slot: actual } });
+    if (save) {
+      settings.fabPosition = { slot: actual };
+      persistDebounced({ fabPosition: settings.fabPosition });
+    }
     return actual;
   }
 
@@ -882,6 +1019,7 @@
     widget.style.right = '';
     widget.style.bottom = '';
     const pos = { x: Math.round(x), y: Math.round(y) };
+    settings.fabPosition = pos;
     persistDebounced({ fabPosition: pos });
     return pos;
   }
@@ -998,7 +1136,7 @@
   /**
    * @param {string} message
    * @param {'info'|'success'|'warn'|'error'} type
-   * @param {{undo?: boolean, duration?: number}} [opts]
+   * @param {{undo?: boolean, duration?: number, undoBaseline?: Set<Element>}} [opts]
    */
   function showToast(message, type = 'info', opts = {}) {
     if (!document.body) return null;
@@ -1026,7 +1164,7 @@
       undo.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        const gmailUndo = findGmailUndoButton();
+        const gmailUndo = findGmailUndoButton(opts.undoBaseline);
         if (gmailUndo) {
           nativeClick(gmailUndo);
           showToast('Undo requested', 'info');
@@ -1180,12 +1318,19 @@
   }
 
   async function runSpamAndDelete(spamBtn) {
-    const threadBefore = getOpenThreadId();
+    const targetBefore = captureActionTarget();
+    const preConfirmBefore = findReportSpamInDialog();
+    const blockPromptBefore = findBlockSenderPrompt();
+    const dialogBaseline = new Set(blockingDialogContainers());
+    const undoBaseline = new Set(gmailUndoButtons());
     nativeClick(spamBtn);
 
     // Pre-confirmation dialog: "Report spam or unsubscribe?". Click "Report spam"
     // so the spam action actually goes through (otherwise it just sits there).
-    const preConfirmBtn = await waitFor(findReportSpamInDialog, 900);
+    const preConfirmBtn = await waitFor(() => {
+      const button = findReportSpamInDialog();
+      return button && button !== preConfirmBefore ? button : null;
+    }, 900);
     if (preConfirmBtn) {
       nativeClick(preConfirmBtn);
       await sleep(250);
@@ -1194,38 +1339,58 @@
     // Post-confirmation dialog: "Spam reported. Also block sender?". While this is
     // open the Delete button is unreachable, so handle it first.
     let blocked = false;
-    if (settings.autoBlockSender) {
-      const blockBtn = await waitFor(findBlockSenderButton, 1200);
-      if (blockBtn) {
-        nativeClick(blockBtn);
+    let blockingPromptOpen = false;
+    const blockPrompt = (settings.autoBlockSender || settings.alsoDelete)
+      ? await waitFor(() => {
+        const prompt = findBlockSenderPrompt();
+        if (!prompt) return null;
+        if (blockPromptBefore && prompt.accept === blockPromptBefore.accept) return null;
+        return prompt;
+      }, 1200)
+      : null;
+    if (blockPrompt) {
+      if (settings.autoBlockSender) {
+        nativeClick(blockPrompt.accept);
         blocked = true;
         await sleep(250);
+      } else if (blockPrompt.dismiss) {
+        nativeClick(blockPrompt.dismiss);
+        await sleep(250);
+      } else if (blockPrompt.blocking) {
+        blockingPromptOpen = true;
       }
     }
 
     let deleted = false;
-    let skippedDelete = false;
+    let deleteSkipReason = '';
     if (settings.alsoDelete) {
       await sleep(450);
-      // If a conversation was open when we reported spam but a DIFFERENT one is
-      // open now (Gmail auto-advance), do NOT click Delete — it would trash an
-      // unrelated email. Reporting spam already removed the target from the inbox.
-      const threadNow = getOpenThreadId();
-      if (advancedToOtherThread(threadBefore, threadNow)) {
-        skippedDelete = true;
+      const newBlockingDialog = blockingDialogContainers().find(
+        (container) => !dialogBaseline.has(container)
+      );
+      if (blockingPromptOpen || newBlockingDialog) {
+        deleteSkipReason = 'a Gmail dialog needs your response';
+      } else if (!sameActionTarget(targetBefore)) {
+        // Gmail can auto-advance or the user can select other rows during the
+        // delay. Never let Delete act on that different target.
+        deleteSkipReason = actionTargetChangeReason(targetBefore);
       } else {
         const delBtn = findDeleteButton();
         if (delBtn) {
+          const confirmBefore = findDeleteForeverConfirm();
           nativeClick(delBtn);
           deleted = true;
           // "Delete forever" pops its own "Delete this message permanently?" confirm.
-          const confirmBtn = await waitFor(findDeleteForeverConfirm, 900);
+          const confirmBtn = await waitFor(() => {
+            const button = findDeleteForeverConfirm();
+            return button && button !== confirmBefore ? button : null;
+          }, 900);
           if (confirmBtn) {
             nativeClick(confirmBtn);
             await sleep(150);
           }
         } else {
-          skippedDelete = true;
+          deleteSkipReason = 'the Delete control was unavailable';
         }
       }
     }
@@ -1234,26 +1399,36 @@
     if (blocked) parts.push('sender blocked');
     if (deleted) parts.push('deleted');
     let message = parts.join(' & ');
-    if (skippedDelete) message += ' — delete skipped (Gmail moved on)';
-    showToast(message, skippedDelete ? 'warn' : 'success', { undo: true });
+    if (deleteSkipReason) message += '; delete skipped because ' + deleteSkipReason;
+    showToast(message, deleteSkipReason ? 'warn' : 'success', { undo: true, undoBaseline });
     return true;
   }
 
   async function handleAction() {
-    const widget = getWidget();
-    if (widget && widget.getAttribute('aria-disabled') === 'true' && !hasActionableTarget()) {
-      showToast(DISABLED_HINT, 'warn');
-      return false;
+    if (actionRequestInFlight) return false;
+    actionRequestInFlight = true;
+    try {
+      if (blockingDialogContainers().length > 0) {
+        showToast('Close the open Gmail dialog before you run Spam & Delete', 'warn');
+        return false;
+      }
+      const widget = getWidget();
+      if (widget && widget.getAttribute('aria-disabled') === 'true' && !hasActionableTarget()) {
+        showToast(DISABLED_HINT, 'warn');
+        return false;
+      }
+      if (settings.confirmEachClick) {
+        const ok = await showConfirmDialog(
+          settings.alsoDelete
+            ? 'This reports the selected email as spam and then deletes it.'
+            : 'This reports the selected email as spam.'
+        );
+        if (!ok) return false;
+      }
+      return spamAndDelete();
+    } finally {
+      actionRequestInFlight = false;
     }
-    if (settings.confirmEachClick) {
-      const ok = await showConfirmDialog(
-        settings.alsoDelete
-          ? 'This reports the selected email as spam and then deletes it.'
-          : 'This reports the selected email as spam.'
-      );
-      if (!ok) return false;
-    }
-    return spamAndDelete();
   }
 
   // ---------------------------------------------------------------------------
@@ -1263,10 +1438,19 @@
   /** Scoped observer on the toolbar container — never on document.body. */
   function observeToolbar() {
     const container = findToolbarContainer();
-    if (!container) return false;
+    if (!container) {
+      if (toolbarObserver) toolbarObserver.disconnect();
+      if (deathObserver) deathObserver.disconnect();
+      toolbarObserver = null;
+      deathObserver = null;
+      observedToolbar = null;
+      return false;
+    }
     if (toolbarObserver && deathObserver && observedToolbar === container) return true;
     if (toolbarObserver) toolbarObserver.disconnect();
     if (deathObserver) deathObserver.disconnect();
+    toolbarObserver = null;
+    deathObserver = null;
     observedToolbar = container;
 
     // Main observer on the toolbar itself — fires when children are added/removed
@@ -1284,7 +1468,6 @@
         for (const record of records) {
           for (const removed of record.removedNodes) {
             if (removed === container || removed.contains(container)) {
-              observeToolbar();
               reAnchorWidget();
               return;
             }
@@ -1326,28 +1509,13 @@
     return Boolean(el.isContentEditable);
   }
 
-  /** Ctrl+Shift+S (Cmd+Shift+S on macOS) — mirrors the manifest `commands` entry. */
-  function isShortcutEvent(e) {
-    if (!e || e.repeat) return false;
-    if (!e.shiftKey) return false;
-    if (!(e.ctrlKey || e.metaKey)) return false;
-    const key = typeof e.key === 'string' ? e.key.toLowerCase() : '';
-    return key === 's';
-  }
-
-  function onGlobalKeydown(e) {
-    if (!isShortcutEvent(e)) return;
-    if (isEditableTarget(e.target)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    handleAction();
-  }
-
   function start() {
     if (started) return;
     started = true;
+    const token = ++lifecycleToken;
 
     loadSettings(() => {
+      if (!started || token !== lifecycleToken) return;
       injectWidget();
       observeToolbar();
       if (placementStatus !== 'toolbar' && effectivePlacement() === 'toolbar') {
@@ -1366,8 +1534,6 @@
     // state in sync with the user's selection without any polling.
     on(document, 'click', scheduleReAnchor, true);
     on(document, 'keyup', scheduleReAnchor, true);
-    on(document, 'keydown', onGlobalKeydown, true);
-
     const motionMq = safeMatchMedia('(prefers-reduced-motion: reduce)');
     if (motionMq && typeof motionMq.addEventListener === 'function') {
       const handler = () => applyPresentationClasses(getWidget());
@@ -1379,7 +1545,12 @@
     try {
       if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
         const msgHandler = (msg) => {
-          if (msg && msg.type === 'ocs-spam-and-delete') handleAction();
+          if (!msg || msg.type !== 'ocs-spam-and-delete') return;
+          if (isEditableTarget(document.activeElement)) {
+            showToast('The shortcut is unavailable while you type', 'warn');
+            return;
+          }
+          handleAction();
         };
         chrome.runtime.onMessage.addListener(msgHandler);
         teardown.push(() => {
@@ -1395,6 +1566,7 @@
   }
 
   function destroy() {
+    lifecycleToken += 1;
     if (toolbarObserver) toolbarObserver.disconnect();
     toolbarObserver = null;
     if (deathObserver) deathObserver.disconnect();
@@ -1412,6 +1584,7 @@
     }
     removeToasts();
     removeWidget();
+    actionRequestInFlight = false;
     started = false;
   }
 
@@ -1447,6 +1620,7 @@
     isInsideEmailRow,
     isInsideEmailContent,
     findToolbarButton,
+    blockingDialogContainers,
     findToolbarContainer,
     findBackButton,
     findArchiveButton,
@@ -1455,8 +1629,14 @@
     findDeleteForeverConfirm,
     findReportSpamInDialog,
     findBlockSenderButton,
+    findBlockSenderPrompt,
+    findBlockSenderDismissButton,
     findGmailUndoButton,
     getOpenThreadId,
+    getRowThreadId,
+    selectedRows,
+    captureActionTarget,
+    sameActionTarget,
     advancedToOtherThread,
     hasActionableTarget,
     detectTheme,
@@ -1482,7 +1662,6 @@
     updateWidgetState,
     showToast,
     showConfirmDialog,
-    isShortcutEvent,
     observeToolbar,
     handleAction,
     runSpamAndDelete,

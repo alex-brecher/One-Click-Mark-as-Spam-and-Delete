@@ -1,9 +1,12 @@
 {
   "manifest_version": 3,
   "name": "One-Click Spam & Delete",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Adds a one-click Spam & Delete button to Gmail's toolbar, between Back and Archive.",
   "permissions": ["storage"],
+  "background": {
+    "service_worker": "background.js"
+  },
   "content_scripts": [
     {
       "matches": ["https://mail.google.com/*"],

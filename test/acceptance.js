@@ -13,10 +13,12 @@
 const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
+const vm = require('vm');
 const { JSDOM } = require('jsdom');
 
 const ROOT = path.join(__dirname, '..');
 const CONTENT_JS = fs.readFileSync(path.join(ROOT, 'content.js'), 'utf8');
+const BACKGROUND_JS = fs.readFileSync(path.join(ROOT, 'background.js'), 'utf8');
 const POPUP_JS = fs.readFileSync(path.join(ROOT, 'popup.js'), 'utf8');
 const POPUP_HTML = fs.readFileSync(path.join(ROOT, 'popup.html'), 'utf8');
 const MANIFEST = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8'));
@@ -74,6 +76,7 @@ function makeChrome(initial) {
   const store = { ...(initial || {}) };
   const calls = { get: [], set: [], tabs: [] };
   const listeners = [];
+  const messageListeners = [];
   const api = {
     storage: {
       sync: {
@@ -100,7 +103,14 @@ function makeChrome(initial) {
       },
     },
     runtime: {
-      onMessage: { addListener() {}, removeListener() {} },
+      lastError: null,
+      onMessage: {
+        addListener(fn) { messageListeners.push(fn); },
+        removeListener(fn) {
+          const i = messageListeners.indexOf(fn);
+          if (i >= 0) messageListeners.splice(i, 1);
+        },
+      },
     },
     commands: {
       getAll(cb) { cb([{ name: 'spam-and-delete', shortcut: 'Ctrl+Shift+S' }]); },
@@ -109,7 +119,7 @@ function makeChrome(initial) {
       create(opts) { calls.tabs.push(opts); },
     },
   };
-  return { api, store, calls, listeners };
+  return { api, store, calls, listeners, messageListeners };
 }
 
 /** Boots a jsdom "Gmail" page with content.js loaded but not auto-started. */
@@ -552,6 +562,11 @@ test('9. settings load from chrome.storage.sync and normalize bad values', () =>
   assert.strictEqual(bad.fabPosition, null);
   assert.deepStrictEqual(plain(api.normalizePosition({ slot: 2.4 })), { slot: 2 });
   assert.deepStrictEqual(plain(api.normalizePosition({ x: 10, y: 20 })), { x: 10, y: 20 });
+  assert.strictEqual(api.normalizePosition({ x: Infinity, y: 20 }), null);
+  assert.strictEqual(api.normalizePosition({ x: NaN, y: 20 }), null);
+  const wrongTypes = api.normalizeSettings({ alsoDelete: 'false', unexpected: 'value' });
+  assert.strictEqual(wrongTypes.alsoDelete, true, 'invalid booleans use the documented default');
+  assert.ok(!Object.prototype.hasOwnProperty.call(wrongTypes, 'unexpected'), 'unknown settings are removed');
 
   assert.deepStrictEqual(plain(Object.keys(api.DEFAULTS).sort()), [
     'alsoDelete', 'autoBlockSender', 'confirmEachClick', 'fabPosition', 'placementMode', 'widgetStyle',
@@ -565,6 +580,7 @@ test('9b. a drag writes its position back to storage, debounced', async () => {
   api.handleFloatingDragTo(100, 100);
   api.handleFloatingDragTo(140, 160);
   api.handleFloatingDragTo(180, 200);
+  assert.deepStrictEqual(plain(api.getSettings().fabPosition), { x: 180, y: 200 }, 'position updates in memory');
   assert.strictEqual(chrome.calls.set.length, 0, 'nothing written mid-drag');
 
   await wait(420);
@@ -579,6 +595,31 @@ test('9c. a saved toolbar slot is restored on injection', () => {
   api.injectWidget();
   assert.strictEqual(api.currentSlotIndex(), 3);
   assert.ok(document.getElementById(api.WIDGET_ID));
+});
+
+test('9c2. an intentional toolbar move is not undone by the re-anchor observer', async () => {
+  const { api } = boot(FLAT_TOOLBAR);
+  api.start();
+  api.moveWidgetToSlot(4);
+  assert.strictEqual(api.currentSlotIndex(), 4);
+  assert.deepStrictEqual(plain(api.getSettings().fabPosition), { slot: 4 });
+  await wait(120);
+  assert.strictEqual(api.currentSlotIndex(), 4, 'observer keeps the user-selected slot');
+  assert.strictEqual(api.isWidgetStale(), false);
+  api.destroy();
+});
+
+test('9c3. a saved slot is restored after Gmail inserts another toolbar control', async () => {
+  const { api, document } = boot(FLAT_TOOLBAR);
+  api.start();
+  api.moveWidgetToSlot(3);
+  const added = document.createElement('div');
+  added.id = 'new-control';
+  document.getElementById('toolbar').insertBefore(added, document.getElementById(api.WIDGET_ID));
+  assert.strictEqual(api.isWidgetStale(), true);
+  await wait(120);
+  assert.strictEqual(api.currentSlotIndex(), 3);
+  api.destroy();
 });
 
 test('9d. popup renders settings, saves changes, and resets to defaults', () => {
@@ -597,6 +638,8 @@ test('9d. popup renders settings, saves changes, and resets to defaults', () => 
   assert.strictEqual(doc.querySelector('input[name="widgetStyle"][value="compact"]').checked, true);
   assert.strictEqual(doc.querySelector('input[name="placementMode"][value="toolbar"]').checked, true);
   assert.strictEqual(doc.getElementById('shortcut').textContent, 'Ctrl+Shift+S');
+  doc.getElementById('customizeShortcut').click();
+  assert.deepStrictEqual(plain(chrome.calls.tabs.pop()), { url: 'chrome://extensions/shortcuts' });
 
   // Every one of the four styles and both placements has a control.
   assert.strictEqual(doc.querySelectorAll('input[name="widgetStyle"]').length, 4);
@@ -750,6 +793,22 @@ test('13. auto-confirm only fires inside role=dialog containers', () => {
   assert.strictEqual(loose.api.findBlockSenderButton(), null);
 });
 
+test('13a. the block-sender dismiss control must share the verified prompt', () => {
+  const { api, document } = boot(`
+    <div role="dialog" id="prompt">
+      <button id="accept">Yes, block</button>
+      <button id="dismiss">No, thanks</button>
+    </div>
+    <div role="dialog"><button id="unrelated">Cancel</button></div>
+  `);
+  const prompt = api.findBlockSenderPrompt();
+  assert.strictEqual(prompt.accept, document.getElementById('accept'));
+  assert.strictEqual(prompt.dismiss, document.getElementById('dismiss'));
+  assert.strictEqual(prompt.blocking, true);
+  assert.strictEqual(api.findBlockSenderDismissButton(), document.getElementById('dismiss'));
+  assert.notStrictEqual(api.findBlockSenderDismissButton(), document.getElementById('unrelated'));
+});
+
 test('13b. the report-spam pre-confirm requires both Report spam and Unsubscribe', () => {
   const both = boot(`
     <div role="dialog">
@@ -819,6 +878,14 @@ test('14. the thread-id guard skips Delete after Gmail auto-advances', async () 
   api.destroy();
 });
 
+test('14a. hidden stale thread IDs do not defeat the active-thread guard', () => {
+  const { api } = boot(`
+    <div data-thread-perm-id="thread-old" data-hidden="1"></div>
+    <div data-thread-perm-id="thread-current"></div>
+  `);
+  assert.strictEqual(api.getOpenThreadId(), 'thread-current');
+});
+
 test('14b. widget is disabled with an explanatory label when nothing is selected', () => {
   const { api, document } = boot(`
     <div gh="mtb" id="toolbar">
@@ -836,14 +903,90 @@ test('14b. widget is disabled with an explanatory label when nothing is selected
   assert.strictEqual(widget.title, widget.getAttribute('aria-label'));
 
   // Checking a row makes it actionable again.
+  const row = document.createElement('div');
+  row.setAttribute('role', 'row');
+  row.setAttribute('jslog', '1:["#thread-f:123"]');
   const box = document.createElement('div');
   box.setAttribute('role', 'checkbox');
   box.setAttribute('aria-checked', 'true');
-  document.body.appendChild(box);
+  row.appendChild(box);
+  document.body.appendChild(row);
   assert.strictEqual(api.hasActionableTarget(), true);
   assert.strictEqual(api.updateWidgetState(), true);
   assert.strictEqual(widget.getAttribute('aria-disabled'), 'false');
   assert.ok(!widget.classList.contains('ocs-widget--disabled'));
+});
+
+test('14b2. changed row selection skips Delete instead of acting on another message', async () => {
+  const { api, document } = boot(FLAT_TOOLBAR + `
+    <div role="row" id="row-a" jslog='1:["#thread-f:100"]'>
+      <div role="checkbox" id="box-a" aria-checked="true"></div>
+    </div>
+    <div role="row" id="row-b" jslog='1:["#thread-f:200"]'>
+      <div role="checkbox" id="box-b" aria-checked="false"></div>
+    </div>
+  `, {
+    settings: { alsoDelete: true, autoBlockSender: false, confirmEachClick: false },
+  });
+  assert.strictEqual(api.getRowThreadId(document.getElementById('row-a')), '#thread-f:100');
+  let deleted = 0;
+  document.getElementById('del').addEventListener('click', () => { deleted += 1; });
+  document.getElementById('spam').addEventListener('click', () => {
+    document.getElementById('box-a').setAttribute('aria-checked', 'false');
+    document.getElementById('box-b').setAttribute('aria-checked', 'true');
+    const prompt = document.createElement('div');
+    prompt.setAttribute('role', 'dialog');
+    prompt.innerHTML = '<button>Yes, block</button><button id="decline">No, thanks</button>';
+    document.body.appendChild(prompt);
+    document.getElementById('decline').addEventListener('click', () => prompt.remove());
+  });
+
+  await api.runSpamAndDelete(document.getElementById('spam'));
+  assert.strictEqual(deleted, 0);
+  assert.match(document.querySelector('.ocs-toast').textContent, /selected messages changed/i);
+  api.destroy();
+});
+
+test('14b3. disabling auto-block dismisses its modal before Delete', async () => {
+  const { api, document } = boot(FLAT_TOOLBAR + '<div data-thread-perm-id="thread-a"></div>', {
+    settings: { alsoDelete: true, autoBlockSender: false, confirmEachClick: false },
+  });
+  const order = [];
+  document.getElementById('del').addEventListener('click', () => order.push('delete'));
+  document.getElementById('spam').addEventListener('click', () => {
+    order.push('spam');
+    const prompt = document.createElement('div');
+    prompt.setAttribute('role', 'dialog');
+    prompt.innerHTML = '<button>Yes, block</button><button id="decline">No, thanks</button>';
+    document.body.appendChild(prompt);
+    document.getElementById('decline').addEventListener('click', () => {
+      order.push('dismiss');
+      prompt.remove();
+    });
+  });
+
+  await api.runSpamAndDelete(document.getElementById('spam'));
+  assert.deepStrictEqual(plain(order), ['spam', 'dismiss', 'delete']);
+  api.destroy();
+});
+
+test('14b4. an unrecognized new Gmail dialog prevents the Delete click', async () => {
+  const { api, document } = boot(FLAT_TOOLBAR + '<div data-thread-perm-id="thread-a"></div>', {
+    settings: { alsoDelete: true, autoBlockSender: true, confirmEachClick: false },
+  });
+  let deleted = 0;
+  document.getElementById('del').addEventListener('click', () => { deleted += 1; });
+  document.getElementById('spam').addEventListener('click', () => {
+    const unknown = document.createElement('div');
+    unknown.setAttribute('role', 'dialog');
+    unknown.innerHTML = '<button>Translated Gmail action</button>';
+    document.body.appendChild(unknown);
+  });
+
+  await api.runSpamAndDelete(document.getElementById('spam'));
+  assert.strictEqual(deleted, 0);
+  assert.match(document.querySelector('.ocs-toast').textContent, /dialog needs your response/i);
+  api.destroy();
 });
 
 test('14c. a disabled widget explains itself instead of acting', async () => {
@@ -900,6 +1043,39 @@ test('14d. the full flow reports spam, blocks the sender, deletes, and offers Un
   api.destroy();
 });
 
+test('14d2. Undo targets Gmail\'s newest action snackbar', () => {
+  const { api, document } = boot(`
+    <div class="bAp" role="alert"><button id="oldUndo">Undo</button></div>
+    <div class="bAp" role="alert"><button id="newUndo">Undo</button></div>
+  `);
+  assert.strictEqual(api.findGmailUndoButton(), document.getElementById('newUndo'));
+});
+
+test('14d3. duplicate action requests cannot open duplicate confirmations', async () => {
+  const { api, document } = boot(FLAT_TOOLBAR + '<div data-thread-perm-id="thread-a"></div>', {
+    settings: { confirmEachClick: true },
+  });
+  const first = api.handleAction();
+  const second = api.handleAction();
+  assert.strictEqual(document.querySelectorAll('.ocs-dialog').length, 1);
+  assert.strictEqual(await second, false);
+  document.querySelector('.ocs-dialog__button--cancel').click();
+  assert.strictEqual(await first, false);
+  api.destroy();
+});
+
+test('14d4. a pre-existing Gmail action dialog blocks a new destructive action', async () => {
+  const { api, document } = boot(FLAT_TOOLBAR + `
+    <div role="dialog"><button>Yes, block</button><button>No, thanks</button></div>
+  `);
+  let fired = 0;
+  document.getElementById('spam').addEventListener('click', () => { fired += 1; });
+  assert.strictEqual(await api.handleAction(), false);
+  assert.strictEqual(fired, 0);
+  assert.match(document.querySelector('.ocs-toast').textContent, /close the open Gmail dialog/i);
+  api.destroy();
+});
+
 test('14e. the undo toast auto-dismisses after 5 seconds', async () => {
   const { api, document } = boot(FLAT_TOOLBAR);
   const toast = api.showToast('Marked as spam', 'success', { undo: true, duration: 120 });
@@ -951,20 +1127,63 @@ test('16. manifest declares the keyboard command and no extra permissions', () =
   assert.deepStrictEqual(plain(MANIFEST.permissions), ['storage'], 'storage permission only');
   assert.ok(!MANIFEST.host_permissions, 'no host permissions');
   assert.strictEqual(MANIFEST.content_scripts[0].run_at, 'document_idle');
+  assert.strictEqual(MANIFEST.background.service_worker, 'background.js');
   const command = MANIFEST.commands['spam-and-delete'];
   assert.ok(command, 'commands key present');
   assert.strictEqual(command.suggested_key.default, 'Ctrl+Shift+S');
   assert.ok(command.description);
 });
 
-test('16b. the in-page shortcut matcher mirrors the manifest binding', () => {
-  const { api } = boot(FLAT_TOOLBAR);
-  assert.strictEqual(api.isShortcutEvent({ key: 'S', shiftKey: true, ctrlKey: true }), true);
-  assert.strictEqual(api.isShortcutEvent({ key: 's', shiftKey: true, metaKey: true }), true);
-  assert.strictEqual(api.isShortcutEvent({ key: 's', shiftKey: true }), false);
-  assert.strictEqual(api.isShortcutEvent({ key: 's', ctrlKey: true }), false);
-  assert.strictEqual(api.isShortcutEvent({ key: 'a', shiftKey: true, ctrlKey: true }), false);
-  assert.strictEqual(api.isShortcutEvent({ key: 's', shiftKey: true, ctrlKey: true, repeat: true }), false);
+test('16b. the service worker relays only the declared command', () => {
+  let commandListener = null;
+  const sends = [];
+  const queries = [];
+  const chrome = {
+    commands: {
+      onCommand: { addListener(fn) { commandListener = fn; } },
+    },
+    tabs: {
+      sendMessage(tabId, message, cb) {
+        sends.push({ tabId, message });
+        if (cb) cb();
+      },
+      query(options, cb) {
+        queries.push(options);
+        cb([{ id: 99 }]);
+      },
+    },
+    runtime: { lastError: null },
+  };
+  vm.runInNewContext(BACKGROUND_JS, { chrome });
+  assert.ok(commandListener);
+
+  commandListener('other-command', { id: 7 });
+  assert.strictEqual(sends.length, 0);
+  commandListener('spam-and-delete', { id: 7 });
+  assert.deepStrictEqual(plain(sends.pop()), { tabId: 7, message: { type: 'ocs-spam-and-delete' } });
+  commandListener('spam-and-delete');
+  assert.deepStrictEqual(plain(queries.pop()), { active: true, lastFocusedWindow: true });
+  assert.deepStrictEqual(plain(sends.pop()), { tabId: 99, message: { type: 'ocs-spam-and-delete' } });
+});
+
+test('16b2. the relayed command does not run while the user types', () => {
+  const { api, document, chrome } = boot(FLAT_TOOLBAR + '<input id="compose">', {
+    storage: { alsoDelete: false, autoBlockSender: false },
+  });
+  let fired = 0;
+  document.getElementById('spam').addEventListener('click', () => { fired += 1; });
+  api.start();
+  assert.strictEqual(chrome.messageListeners.length, 1);
+
+  document.getElementById('compose').focus();
+  chrome.messageListeners[0]({ type: 'ocs-spam-and-delete' });
+  assert.strictEqual(fired, 0);
+  assert.match(document.querySelector('.ocs-toast').textContent, /while you type/i);
+
+  document.getElementById('compose').blur();
+  chrome.messageListeners[0]({ type: 'ocs-spam-and-delete' });
+  assert.strictEqual(fired, 1);
+  api.destroy();
 });
 
 test('16c. Enter and Space activate the widget', async () => {
@@ -1124,6 +1343,32 @@ test('18. widget recovers when the entire toolbar container is replaced — no o
   api.destroy();
 });
 
+test('18b. widget recovers when replacement toolbar arrives in a later mutation', async () => {
+  const { api, document } = boot(FLAT_TOOLBAR);
+  api.start();
+  document.getElementById('toolbar').remove();
+
+  await wait(60);
+  const fallback = document.getElementById(api.WIDGET_ID);
+  assert.ok(fallback && fallback.classList.contains('ocs-widget--fallback'));
+
+  const replacement = document.createElement('div');
+  replacement.id = 'toolbar';
+  replacement.setAttribute('gh', 'mtb');
+  replacement.innerHTML = `
+    <div id="back" aria-label="Back to Inbox"></div>
+    <div id="archive" aria-label="Archive"></div>
+  `;
+  document.body.appendChild(replacement);
+  await wait(60);
+
+  const widget = document.getElementById(api.WIDGET_ID);
+  assert.strictEqual(widget.parentNode, replacement);
+  assert.ok(widget.classList.contains('ocs-placement--toolbar'));
+  assert.strictEqual(api.observedToolbar(), replacement);
+  api.destroy();
+});
+
 // --- 19. Live theme synchronization on resize -----------------------------
 
 test('19. resize event triggers theme class update on the widget', () => {
@@ -1149,15 +1394,14 @@ test('19. resize event triggers theme class update on the widget', () => {
   });
 });
 
-// --- 20. Keyboard shortcut — fixed default contract -----------------------
+// --- 20. Keyboard shortcut command contract -------------------------------
 
-test('20. popup displays the shortcut as a fixed default, not dynamically resolved', () => {
+test('20. popup displays the active Chrome shortcut', () => {
   const dom = new JSDOM(POPUP_HTML, { url: 'chrome-extension://test/popup.html', runScripts: 'outside-only' });
   const { window } = dom;
   installLayout(window);
   installMatchMedia(window, {});
   window.chrome = makeChrome({}).api;
-  // Override commands.getAll — if the popup calls it, this will record the call.
   let getAllCalled = false;
   window.chrome.commands = {
     getAll(cb) {
@@ -1171,54 +1415,22 @@ test('20. popup displays the shortcut as a fixed default, not dynamically resolv
   const shortcutEl = window.document.getElementById('shortcut');
   assert.ok(shortcutEl, 'shortcut element exists');
 
-  // The shortcut display should NOT be resolved from commands.getAll — it
-  // should show the fixed default, because rebound commands don't work
-  // without a service-worker relay.
-  assert.strictEqual(
-    getAllCalled, false,
-    'popup must not call commands.getAll — shortcut is fixed'
-  );
-  assert.strictEqual(shortcutEl.textContent, 'Ctrl+Shift+S');
-  assert.ok(
-    !shortcutEl.closest('p').textContent.includes('chrome://extensions/shortcuts'),
-    'no link to chrome://extensions/shortcuts since rebinding is ineffective'
-  );
+  assert.strictEqual(getAllCalled, true);
+  assert.strictEqual(shortcutEl.textContent, 'Alt+Z');
+  assert.match(window.document.getElementById('shortcutState').textContent, /while Gmail is focused/i);
 });
 
-test('20b. content.js isShortcutEvent is the sole authoritative check', () => {
-  const { api } = boot(FLAT_TOOLBAR);
-  // The only binding is the hardcoded keydown match.
-  assert.strictEqual(api.isShortcutEvent({ key: 'S', shiftKey: true, ctrlKey: true }), true);
-  assert.strictEqual(api.isShortcutEvent({ key: 's', shiftKey: true, metaKey: true }), true);
-
-  // Rebound keys like Alt+Z do NOT work.
-  assert.strictEqual(api.isShortcutEvent({ key: 'z', altKey: true }), false);
-  assert.strictEqual(api.isShortcutEvent({ key: 'z', altKey: true, shiftKey: true }), false);
-
-  // No chrome.commands.onCommand listener exists in content.js.
-  assert.ok(!CONTENT_JS.includes('chrome.commands.onCommand'), 'no onCommand listener');
-  assert.ok(!CONTENT_JS.includes('commands.onCommand'), 'no commands relay');
+test('20b. the content script does not duplicate Chrome command handling', () => {
+  assert.ok(BACKGROUND_JS.includes('chrome.commands.onCommand.addListener'));
+  assert.ok(!CONTENT_JS.includes('isShortcutEvent'));
+  assert.ok(!CONTENT_JS.includes("on(document, 'keydown', onGlobalKeydown"));
 });
 
-test('20c. README does not advertise chrome://extensions/shortcuts rebinding', () => {
+test('20c. README documents shortcut rebinding and the service worker', () => {
   const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
-  // Collapse line wrapping so the stale claim is matchable as one phrase.
-  const flat = readme.replace(/\s+/g, ' ');
-
-  // The corrected text mentions the URL only to say rebinding does NOT work,
-  // so assert on the stale claim rather than on the bare URL.
-  assert.ok(
-    !flat.includes('can be rebound at `chrome://extensions/shortcuts`'),
-    'README must not claim the shortcut can be rebound at chrome://extensions/shortcuts'
-  );
-  assert.ok(
-    flat.includes('cannot be rebound at `chrome://extensions/shortcuts`'),
-    'README must state the shortcut cannot be rebound'
-  );
-  assert.ok(
-    readme.includes('fixed in-page listener'),
-    'README must describe the shortcut as a fixed in-page listener'
-  );
+  assert.ok(readme.includes('`chrome://extensions/shortcuts`'));
+  assert.ok(readme.includes('Manifest V3 service'));
+  assert.ok(readme.includes('background.js'));
   assert.ok(
     readme.includes('death-watch'),
     'README must document the death-watch observer on the toolbar parent'

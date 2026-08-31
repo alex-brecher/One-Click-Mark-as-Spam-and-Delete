@@ -2,10 +2,8 @@
  * Options popup. Mirrors the settings schema used by content.js; every change
  * is written straight to chrome.storage.sync, which the content script watches.
  *
- * The keyboard shortcut is a fixed in-page default (Ctrl/Cmd+Shift+S).  Rebound
- * Chromium commands are NOT relayed (the extension has no service worker and no
- * broad host permissions), so the popup presents the honest binding rather than
- * the dynamically-resolved one from chrome.commands.getAll.
+ * The service worker relays the registered Chrome command to the active Gmail
+ * tab. The popup shows the user's current binding from chrome.commands.getAll.
  */
 
 const DEFAULTS = {
@@ -32,7 +30,9 @@ function setStatus(text) {
 }
 
 function save(patch, message = 'Saved') {
-  chrome.storage.sync.set(patch, () => setStatus(message));
+  chrome.storage.sync.set(patch, () => {
+    setStatus(chrome.runtime && chrome.runtime.lastError ? 'Could not save' : message);
+  });
 }
 
 function render(stored) {
@@ -50,6 +50,28 @@ function render(stored) {
 
 function load() {
   chrome.storage.sync.get(DEFAULTS, (stored) => render({ ...DEFAULTS, ...stored }));
+}
+
+function loadShortcut() {
+  const shortcut = document.getElementById('shortcut');
+  const state = document.getElementById('shortcutState');
+  if (!shortcut || !chrome.commands || !chrome.commands.getAll) return;
+
+  chrome.commands.getAll((commands) => {
+    if (chrome.runtime && chrome.runtime.lastError) {
+      shortcut.textContent = 'Unavailable';
+      if (state) state.textContent = 'Chrome could not read the shortcut.';
+      return;
+    }
+    const command = (commands || []).find((item) => item.name === 'spam-and-delete');
+    const binding = command && command.shortcut ? command.shortcut : '';
+    shortcut.textContent = binding || 'Not assigned';
+    if (state) {
+      state.textContent = binding
+        ? 'Use this shortcut while Gmail is focused.'
+        : 'Assign a shortcut before you use the keyboard command.';
+    }
+  });
 }
 
 function bind() {
@@ -73,14 +95,26 @@ function bind() {
   if (reset) {
     reset.addEventListener('click', () => {
       chrome.storage.sync.set({ ...DEFAULTS }, () => {
+        if (chrome.runtime && chrome.runtime.lastError) {
+          setStatus('Could not restore defaults');
+          return;
+        }
         render(DEFAULTS);
         setStatus('Defaults restored');
       });
+    });
+  }
+
+  const customizeShortcut = document.getElementById('customizeShortcut');
+  if (customizeShortcut) {
+    customizeShortcut.addEventListener('click', () => {
+      chrome.tabs.create({ url: 'chrome://extensions/shortcuts' });
     });
   }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
   load();
+  loadShortcut();
   bind();
 });

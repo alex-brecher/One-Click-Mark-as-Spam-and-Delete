@@ -28,7 +28,7 @@ MAIN FEATURES
 • Moves the message to Trash after the spam action
 • Works with one open message or multiple selected messages
 • Handles Gmail’s spam and block dialogs
-• Stops the Delete step if Gmail opens a different conversation
+• Stops the Delete step if Gmail changes the conversation or selected rows
 • Offers an Undo action through Gmail
 
 CONTROL OPTIONS
@@ -37,6 +37,7 @@ CONTROL OPTIONS
 • Select one of four control styles
 • Move the control to your preferred position
 • Use Ctrl+Shift+S on Windows or Cmd+Shift+S on macOS
+• Change the shortcut on Chrome's extension shortcuts page
 • Turn on a confirmation prompt for each action
 • Choose whether the extension blocks the sender
 
