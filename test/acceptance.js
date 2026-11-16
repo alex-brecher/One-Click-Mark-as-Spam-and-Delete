@@ -146,6 +146,10 @@ function boot(bodyHtml, opts = {}) {
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** The accept / dismiss controls of Gmail's block-sender prompt, or null. */
+const blockAccept = (api) => { const p = api.findBlockSenderPrompt(); return p ? p.accept : null; };
+const blockDismiss = (api) => { const p = api.findBlockSenderPrompt(); return p ? p.dismiss : null; };
+
 /**
  * Values produced inside jsdom carry that realm's Object/Array prototypes, so
  * assert.deepStrictEqual would reject them on prototype identity alone. Round
@@ -781,19 +785,19 @@ test('13. auto-confirm only fires inside role=dialog containers', () => {
   const inDialog = boot(`
     <div role="dialog" id="dlg"><div id="block" role="button">Yes, block</div></div>
   `);
-  assert.strictEqual(inDialog.api.findBlockSenderButton(), inDialog.document.getElementById('block'));
+  assert.strictEqual(blockAccept(inDialog.api), inDialog.document.getElementById('block'));
 
   // The same markup planted by a malicious email must never be clicked.
   const inEmail = boot(EMAIL_BODY);
-  assert.strictEqual(inEmail.api.findBlockSenderButton(), null);
+  assert.strictEqual(blockAccept(inEmail.api), null);
 
   // ...not even when the email wraps it in its own fake dialog.
   const fakeDialog = boot('<div class="a3s"><div role="dialog"><div role="button">Yes, block</div></div></div>');
-  assert.strictEqual(fakeDialog.api.findBlockSenderButton(), null);
+  assert.strictEqual(blockAccept(fakeDialog.api), null);
 
   // A loose button in the page body is not a dialog either.
   const loose = boot('<div role="button">Yes, block</div>');
-  assert.strictEqual(loose.api.findBlockSenderButton(), null);
+  assert.strictEqual(blockAccept(loose.api), null);
 });
 
 test('13a. the block-sender dismiss control must share the verified prompt', () => {
@@ -808,8 +812,8 @@ test('13a. the block-sender dismiss control must share the verified prompt', () 
   assert.strictEqual(prompt.accept, document.getElementById('accept'));
   assert.strictEqual(prompt.dismiss, document.getElementById('dismiss'));
   assert.strictEqual(prompt.blocking, true);
-  assert.strictEqual(api.findBlockSenderDismissButton(), document.getElementById('dismiss'));
-  assert.notStrictEqual(api.findBlockSenderDismissButton(), document.getElementById('unrelated'));
+  assert.strictEqual(blockDismiss(api), document.getElementById('dismiss'));
+  assert.notStrictEqual(blockDismiss(api), document.getElementById('unrelated'));
 });
 
 test('13b. the report-spam pre-confirm requires both Report spam and Unsubscribe', () => {
@@ -835,7 +839,7 @@ test('13c. our own dialog and toast are never treated as Gmail UI', () => {
   assert.ok(ours, 'our dialog rendered');
   assert.strictEqual(ours.getAttribute('role'), 'dialog');
   assert.strictEqual(ours.getAttribute('aria-modal'), 'true');
-  assert.strictEqual(api.findBlockSenderButton(), null);
+  assert.strictEqual(blockAccept(api), null);
   assert.strictEqual(api.findReportSpamInDialog(), null);
   assert.strictEqual(api.findReportSpamButton(), document.getElementById('spam'), 'Gmail controls still resolve');
 });
@@ -863,9 +867,6 @@ test('14. the thread-id guard skips Delete after Gmail auto-advances', async () 
     settings: { alsoDelete: true, autoBlockSender: false, confirmEachClick: false },
   });
   assert.strictEqual(api.getOpenThreadId(), 'thread-a');
-  assert.strictEqual(api.advancedToOtherThread('a', 'b'), true);
-  assert.strictEqual(api.advancedToOtherThread('a', 'a'), false);
-  assert.strictEqual(api.advancedToOtherThread(null, 'b'), false, 'list view is not an auto-advance');
 
   let deleted = 0;
   document.getElementById('del').addEventListener('click', () => { deleted += 1; });

@@ -445,18 +445,12 @@
     return null;
   }
 
-  // Finds Gmail's "Spam reported. Also block sender?" confirmation button.
-  // Gmail shows this either as a modal dialog or as a bottom-left snackbar.
-  // Search is restricted to dialog/alert containers only — never the message
-  // body or the document at large (see isInsideEmailContent).
-  function findBlockSenderButton() {
-    const prompt = findBlockSenderPrompt();
-    return prompt ? prompt.accept : null;
-  }
-
   /**
-   * Finds Gmail's block-sender prompt and its safe response controls. The
-   * dismiss control is accepted only when the same container has "Yes, block".
+   * Finds Gmail's "Spam reported. Also block sender?" prompt (modal dialog or
+   * bottom-left snackbar) and its safe response controls. The search covers
+   * dialog/alert containers only, never the message body (see
+   * isInsideEmailContent). The dismiss control is accepted only when the same
+   * container has "Yes, block".
    */
   function findBlockSenderPrompt() {
     const dismissLabels = new Set(['no, thanks', 'not now', 'cancel', 'no']);
@@ -480,11 +474,6 @@
       }
     }
     return null;
-  }
-
-  function findBlockSenderDismissButton() {
-    const prompt = findBlockSenderPrompt();
-    return prompt ? prompt.dismiss : null;
   }
 
   /** Gmail's own "Undo" affordance in its post-action snackbar. */
@@ -587,14 +576,6 @@
       return 'Gmail moved to another conversation';
     }
     return 'the selected messages changed';
-  }
-
-  /**
-   * True when Gmail auto-advanced to a different conversation between reporting
-   * spam and deleting — in that case the Delete step must be skipped.
-   */
-  function advancedToOtherThread(before, now) {
-    return Boolean(before && now && now !== before);
   }
 
   /** Whether there is anything for the action to operate on right now. */
@@ -771,8 +752,7 @@
       }
     }
     // No Archive control in this view: sit immediately after Back.
-    const backSibling = back;
-    return { parent: back.parentNode, before: backSibling.nextSibling };
+    return { parent: back.parentNode, before: back.nextSibling };
   }
 
   function ensureWidget() {
@@ -1649,16 +1629,13 @@
     findDeleteButton,
     findDeleteForeverConfirm,
     findReportSpamInDialog,
-    findBlockSenderButton,
     findBlockSenderPrompt,
-    findBlockSenderDismissButton,
     findGmailUndoButton,
     getOpenThreadId,
     getRowThreadId,
     selectedRows,
     captureActionTarget,
     sameActionTarget,
-    advancedToOtherThread,
     hasActionableTarget,
     detectTheme,
     prefersReducedMotion,
