@@ -4,7 +4,7 @@
   "description": "Chrome MV3 extension that adds a one-click Spam & Delete control to Gmail's primary toolbar.",
   "private": true,
   "scripts": {
-    "test": "node test/acceptance.js"
+    "test": "node test/acceptance.js && node test/independent-probes.js"
   },
   "devDependencies": {
     "jsdom": "^24.1.0"

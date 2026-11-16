@@ -125,10 +125,12 @@ Schema stored in `chrome.storage.sync`:
 | --- | --- |
 | `manifest.json` | Manifest V3 declaration, including the `commands` shortcut. |
 | `background.js` | Service worker that sends the Chrome command to Gmail. |
+| `settings.js` | Settings defaults and validation, shared by the content script and popup. |
 | `content.js` | Single-file IIFE: placement, widget styles, action, toast, dialog. |
 | `styles.css` | All four widget styles, both placements, toast and dialog. |
 | `popup.html` / `popup.css` / `popup.js` | Settings popup. |
 | `test/acceptance.js` | jsdom acceptance suite (`npm test`). |
+| `test/independent-probes.js` | Toolbar-replacement probes (also run by `npm test`). |
 | `icons/` | 16/48/128 px PNG icons. |
 | `scripts/make_icons.py` | Regenerates the PNG icons (no third-party deps). |
 
@@ -136,6 +138,8 @@ Schema stored in `chrome.storage.sync`:
 
 - `content.js` is deliberately one IIFE with no imports and no bundler, so it
   can be listed directly in `content_scripts` and run at `document_idle`.
+  `settings.js` is listed just before it and exposes `OCS_SETTINGS`; the popup
+  loads the same file, so defaults and validation exist in one place.
 - Control detection: Back via `[aria-label="Back to Inbox"]`,
   `[guidedhelpid="backButton"]`, `[data-tooltip^="Back to"]`; Archive via
   `[aria-label="Archive"]`, `[act="7"]`, `[act="8"]`. Report spam and Delete
@@ -153,10 +157,15 @@ Schema stored in `chrome.storage.sync`:
   toolbar children change; a second **death-watch** observer on the toolbar's
   direct parent (`childList` only, no subtree) that fires when the toolbar
   container itself is removed or replaced (full-container replacement, which
-  the toolbar-scoped observer cannot detect). A one-shot bootstrap observer
-  catches Gmail's first paint and disconnects immediately. Injection is
+  the toolbar-scoped observer cannot detect). A bootstrap observer waits for
+  Gmail's Back button (first paint, or the inbox list view where there is no
+  Back button) and disconnects once the widget anchors; it checks at most once
+  per animation frame behind a single cheap `querySelector`. `keyup` inside
+  text fields is ignored, so typing in Compose costs nothing. Injection is
   idempotent, listeners are registered once, and everything is torn down on
-  `pagehide` / `beforeunload`.
+  `pagehide` and restarted on a back/forward cache restore. `beforeunload` is
+  deliberately not used: a cancelled "Leave site?" prompt would remove the
+  widget from a page that stays open.
 - Permissions: `storage` only. No network calls, no analytics, no host
   permissions beyond the `https://mail.google.com/*` content-script match.
 - Settings live in `chrome.storage.sync` and are watched via
