@@ -1553,11 +1553,13 @@
       teardown.push(() => motionMq.removeEventListener('change', handler));
     }
 
-    // Optional: a future background page can relay the manifest command.
+    // The service worker relays the manifest keyboard command here.
     try {
       if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
-        const msgHandler = (msg) => {
+        const msgHandler = (msg, sender) => {
           if (!msg || msg.type !== 'ocs-spam-and-delete') return;
+          // Accept the command only from this extension's own service worker.
+          if (sender && chrome.runtime.id && sender.id !== chrome.runtime.id) return;
           if (isEditableTarget(document.activeElement)) {
             showToast('The shortcut is unavailable while you type', 'warn');
             return;

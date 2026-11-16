@@ -1613,6 +1613,21 @@ test('26b. popup repairs invalid stored values instead of selecting nothing', ()
   assert.strictEqual(doc.getElementById('alsoDelete').checked, true);
 });
 
+test('27. the command relay ignores messages from other extensions', () => {
+  const { api, document, chrome } = boot(FLAT_TOOLBAR + '<div data-thread-perm-id="t1"></div>', {
+    storage: { alsoDelete: false, autoBlockSender: false },
+  });
+  chrome.api.runtime.id = 'self-id';
+  let fired = 0;
+  document.getElementById('spam').addEventListener('click', () => { fired += 1; });
+  api.start();
+  chrome.messageListeners[0]({ type: 'ocs-spam-and-delete' }, { id: 'other-id' });
+  assert.strictEqual(fired, 0, 'foreign sender ignored');
+  chrome.messageListeners[0]({ type: 'ocs-spam-and-delete' }, { id: 'self-id' });
+  assert.strictEqual(fired, 1, 'own service worker accepted');
+  api.destroy();
+});
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
