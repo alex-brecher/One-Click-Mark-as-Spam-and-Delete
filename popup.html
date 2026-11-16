@@ -4,11 +4,19 @@
     <meta charset="utf-8" />
     <title>One-Click Spam &amp; Delete: Settings</title>
     <link rel="stylesheet" href="popup.css" />
+    <script src="theme.js"></script>
   </head>
   <body>
     <header>
-      <h1>One-Click Spam &amp; Delete</h1>
-      <p class="subtitle">Settings</p>
+      <div>
+        <h1>One-Click Spam &amp; Delete</h1>
+        <p class="subtitle">Settings</p>
+      </div>
+      <div class="theme-switch" role="radiogroup" aria-label="Colour theme">
+        <button type="button" role="radio" data-theme="system" aria-checked="true">System</button>
+        <button type="button" role="radio" data-theme="light" aria-checked="false">Light</button>
+        <button type="button" role="radio" data-theme="dark" aria-checked="false">Dark</button>
+      </div>
     </header>
 
     <section class="group" aria-labelledby="behaviour-heading">

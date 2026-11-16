@@ -22,6 +22,7 @@ const CONTENT_JS = fs.readFileSync(path.join(ROOT, 'content.js'), 'utf8');
 const BACKGROUND_JS = fs.readFileSync(path.join(ROOT, 'background.js'), 'utf8');
 const POPUP_JS = fs.readFileSync(path.join(ROOT, 'popup.js'), 'utf8');
 const POPUP_HTML = fs.readFileSync(path.join(ROOT, 'popup.html'), 'utf8');
+const THEME_JS = fs.readFileSync(path.join(ROOT, 'theme.js'), 'utf8');
 const MANIFEST = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8'));
 
 // ---------------------------------------------------------------------------
@@ -1668,6 +1669,34 @@ test('28. popup feedback links open the hosted form in a new tab', () => {
   assert.strictEqual(params.get('p'), '/v9.9.9/popup');
   assert.strictEqual(new URLSearchParams(new URL(chrome.calls.tabs[1].url).hash.slice(1)).get('k'), 'bug');
   assert.deepStrictEqual(plain(MANIFEST.permissions), ['storage'], 'no new permission needed');
+});
+
+test('29. popup theme switch: System by default, remembers Light and Dark', () => {
+  const load = () => {
+    // jsdom gives chrome-extension:// an opaque origin with no localStorage.
+    const dom = new JSDOM(POPUP_HTML, { url: 'http://localhost/popup.html', runScripts: 'outside-only' });
+    dom.window.eval(THEME_JS);
+    dom.window.document.dispatchEvent(new dom.window.Event('DOMContentLoaded'));
+    return dom.window;
+  };
+  let w = load();
+  const checked = (win) => win.document.querySelector('.theme-switch [aria-checked="true"]').dataset.theme;
+  assert.strictEqual(checked(w), 'system');
+  assert.strictEqual(w.document.documentElement.hasAttribute('data-theme'), false, 'System follows the computer');
+  w.document.querySelector('[data-theme="dark"]').click();
+  assert.strictEqual(w.document.documentElement.getAttribute('data-theme'), 'dark');
+  assert.strictEqual(w.localStorage.getItem('ocs-popup-theme'), 'dark');
+
+  const light = w.document.querySelector('[data-theme="light"]');
+  light.click();
+  assert.strictEqual(w.document.documentElement.getAttribute('data-theme'), 'light');
+  light.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+  assert.strictEqual(checked(w), 'dark', 'arrow keys move the selection');
+
+  const css = fs.readFileSync(path.join(ROOT, 'popup.css'), 'utf8');
+  assert.ok(/:root\[data-theme="dark"\]/.test(css), 'explicit Dark tokens');
+  assert.ok(/:root:not\(\[data-theme="light"\]\)/.test(css), 'System dark mode respects an explicit Light choice');
+  assert.ok(/<script src="theme.js"><\/script>\s*<\/head>/.test(POPUP_HTML), 'theme applies before first paint');
 });
 
 // ---------------------------------------------------------------------------
