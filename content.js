@@ -1591,8 +1591,10 @@
       /* ignore */
     }
 
+    // pagehide only. beforeunload also fires when Gmail shows "Leave site?"
+    // and the user cancels, which would tear the widget down on a page that
+    // stays open.
     on(window, 'pagehide', destroy);
-    on(window, 'beforeunload', destroy);
   }
 
   function destroy() {
@@ -1629,6 +1631,11 @@
     } else {
       start();
     }
+    // A page restored from the back/forward cache fired pagehide (and so
+    // destroy) on the way out; bring the widget back when it returns.
+    window.addEventListener('pageshow', (e) => {
+      if (e.persisted && !started) start();
+    });
   }
 
   // Test hook. The content script runs in an isolated world, so this is not

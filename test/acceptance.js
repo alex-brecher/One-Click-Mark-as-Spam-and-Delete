@@ -1497,6 +1497,39 @@ test('21c. moving the widget to its current slot writes nothing to the DOM', asy
   api.destroy();
 });
 
+test('22. a cancelled "Leave site?" prompt does not remove the widget', () => {
+  const { api, document, window } = boot(FLAT_TOOLBAR);
+  api.start();
+  assert.ok(document.getElementById(api.WIDGET_ID));
+  window.dispatchEvent(new window.Event('beforeunload'));
+  assert.ok(document.getElementById(api.WIDGET_ID), 'widget survives beforeunload');
+  window.dispatchEvent(new window.Event('pagehide'));
+  assert.strictEqual(document.getElementById(api.WIDGET_ID), null, 'pagehide still cleans up');
+});
+
+test('22b. the widget comes back after a back/forward cache restore', async () => {
+  const dom = new JSDOM(`<!doctype html><html><body>${FLAT_TOOLBAR}</body></html>`, {
+    url: 'https://mail.google.com/mail/u/0/#inbox',
+    pretendToBeVisual: true,
+    runScripts: 'outside-only',
+  });
+  const { window } = dom;
+  installLayout(window);
+  installMatchMedia(window, {});
+  window.chrome = makeChrome({}).api;
+  window.eval(CONTENT_JS); // autostart on
+  const api = window.__OCS__;
+  await wait(20); // autostart waits for DOMContentLoaded
+  assert.ok(window.document.getElementById(api.WIDGET_ID));
+  window.dispatchEvent(new window.Event('pagehide'));
+  assert.strictEqual(window.document.getElementById(api.WIDGET_ID), null);
+  const restore = new window.Event('pageshow');
+  Object.defineProperty(restore, 'persisted', { value: true });
+  window.dispatchEvent(restore);
+  assert.ok(window.document.getElementById(api.WIDGET_ID), 'widget restored');
+  api.destroy();
+});
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
