@@ -218,12 +218,16 @@
     }
   }
 
+  function cancelPendingSave() {
+    if (!saveTimer) return;
+    clearTimeout(saveTimer);
+    timers.delete(saveTimer);
+    saveTimer = null;
+  }
+
   /** Debounced so a drag writes once when it settles, not on every pointermove. */
   function persistDebounced(patch, delay = 300) {
-    if (saveTimer) {
-      clearTimeout(saveTimer);
-      timers.delete(saveTimer);
-    }
+    cancelPendingSave();
     saveTimer = later(() => {
       saveTimer = null;
       persist(patch);
@@ -243,6 +247,9 @@
           before.widgetStyle !== settings.widgetStyle ||
           before.placementMode !== settings.placementMode;
         if (needsRebuild) {
+          // The popup resets fabPosition with a placement or style change. A
+          // drag save still waiting to fire would restore the old position.
+          cancelPendingSave();
           removeWidget();
           injectWidget();
         } else {
@@ -933,6 +940,12 @@
   // Position (floating x/y, toolbar slot)
   // ---------------------------------------------------------------------------
 
+  const scheduleFloatingClamp = rafBatched(() => {
+    const widget = getWidget();
+    if (!widget || isToolbarPlaced()) return;
+    applyFloatingPosition(widget, settings.fabPosition);
+  });
+
   function applyPosition() {
     const widget = getWidget();
     if (!widget) return;
@@ -1554,6 +1567,8 @@
     on(window, 'hashchange', scheduleReAnchor);
     on(window, 'popstate', scheduleReAnchor);
     on(window, 'resize', scheduleReAnchor);
+    // Keep a dragged floating button inside the viewport when the window shrinks.
+    on(window, 'resize', scheduleFloatingClamp);
 
     // Event delegation: one capture-phase listener keeps the enabled/disabled
     // state in sync with the user's selection without any polling.

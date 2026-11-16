@@ -1551,6 +1551,39 @@ test('23. a second request during a running action is ignored silently', async (
   api.destroy();
 });
 
+test('24. a floating button stays on screen after the window shrinks', async () => {
+  const { api, document, window } = boot('<div id="app"></div>', {
+    storage: { placementMode: 'floating', fabPosition: { x: 1000, y: 700 } },
+  });
+  window.innerWidth = 1200;
+  window.innerHeight = 800;
+  api.start();
+  await wait(20);
+  const widget = document.getElementById(api.WIDGET_ID);
+  assert.strictEqual(widget.style.left, '1000px');
+  window.innerWidth = 500;
+  window.innerHeight = 400;
+  window.dispatchEvent(new window.Event('resize'));
+  await wait(40);
+  assert.ok(parseFloat(widget.style.left) <= 500 - 24 - 4, 'left clamped: ' + widget.style.left);
+  assert.ok(parseFloat(widget.style.top) <= 400 - 24 - 4, 'top clamped: ' + widget.style.top);
+  api.destroy();
+});
+
+test('25. a placement change from the popup cancels a pending drag save', async () => {
+  const { api, chrome } = boot(FLAT_TOOLBAR);
+  api.start();
+  await wait(20);
+  api.moveWidgetToSlot(0); // queues a debounced { slot: 0 } save
+  const change = { placementMode: { newValue: 'floating' }, fabPosition: { newValue: null } };
+  chrome.store.placementMode = 'floating';
+  chrome.store.fabPosition = null;
+  for (const fn of chrome.listeners) fn(change, 'sync');
+  await wait(400);
+  assert.strictEqual(chrome.store.fabPosition, null, 'stale slot must not overwrite the reset');
+  api.destroy();
+});
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
