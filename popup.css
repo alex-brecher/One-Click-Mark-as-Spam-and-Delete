@@ -168,6 +168,12 @@ footer a:hover {
   min-height: 1em;
 }
 
+.feedback-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
 .link-button {
   padding: 0;
   border: none;

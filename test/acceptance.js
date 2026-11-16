@@ -1645,6 +1645,31 @@ test('22c. a frame pending at pagehide does not block re-anchoring after restore
   api.destroy();
 });
 
+test('28. popup feedback links open the hosted form in a new tab', () => {
+  const dom = new JSDOM(POPUP_HTML, { url: 'chrome-extension://test/popup.html', runScripts: 'outside-only' });
+  const { window } = dom;
+  installLayout(window);
+  installMatchMedia(window, {});
+  const chrome = makeChrome({});
+  chrome.api.runtime.getManifest = () => ({ version: '9.9.9' });
+  window.chrome = chrome.api;
+  window.eval(SETTINGS_JS);
+  window.eval(POPUP_JS);
+  window.document.dispatchEvent(new window.Event('DOMContentLoaded'));
+  window.document.getElementById('suggestIdea').click();
+  window.document.getElementById('reportProblem').click();
+  assert.strictEqual(chrome.calls.tabs.length, 2);
+  const idea = new URL(chrome.calls.tabs[0].url);
+  assert.strictEqual(idea.origin + idea.pathname, 'https://feedback.netrition.com/');
+  assert.strictEqual(idea.search, '', 'context stays in the fragment, never the query string');
+  const params = new URLSearchParams(idea.hash.slice(1));
+  assert.strictEqual(params.get('app'), 'one-click-spam');
+  assert.strictEqual(params.get('k'), 'idea');
+  assert.strictEqual(params.get('p'), '/v9.9.9/popup');
+  assert.strictEqual(new URLSearchParams(new URL(chrome.calls.tabs[1].url).hash.slice(1)).get('k'), 'bug');
+  assert.deepStrictEqual(plain(MANIFEST.permissions), ['storage'], 'no new permission needed');
+});
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
