@@ -6,16 +6,8 @@
  * tab. The popup shows the user's current binding from chrome.commands.getAll.
  */
 
-const DEFAULTS = {
-  alsoDelete: true,
-  autoBlockSender: true,
-  confirmEachClick: false,
-  widgetStyle: 'gmail-icon',
-  placementMode: 'toolbar',
-  fabPosition: null,
-};
-
-const CHECKBOXES = ['alsoDelete', 'autoBlockSender', 'confirmEachClick'];
+// Shared schema from settings.js, loaded first by popup.html.
+const { DEFAULTS, BOOLEAN_KEYS: CHECKBOXES, normalizeSettings } = globalThis.OCS_SETTINGS;
 const RADIO_GROUPS = ['placementMode', 'widgetStyle'];
 
 function setStatus(text) {
@@ -38,10 +30,10 @@ function save(patch, message = 'Saved') {
 function render(stored) {
   for (const key of CHECKBOXES) {
     const el = document.getElementById(key);
-    if (el) el.checked = Boolean(stored[key]);
+    if (el) el.checked = stored[key];
   }
   for (const group of RADIO_GROUPS) {
-    const value = stored[group] != null ? stored[group] : DEFAULTS[group];
+    const value = stored[group];
     for (const input of document.querySelectorAll(`input[name="${group}"]`)) {
       input.checked = input.value === value;
     }
@@ -49,7 +41,9 @@ function render(stored) {
 }
 
 function load() {
-  chrome.storage.sync.get(DEFAULTS, (stored) => render({ ...DEFAULTS, ...stored }));
+  // normalizeSettings also repairs bad stored values, so a radio group is
+  // never left with nothing selected.
+  chrome.storage.sync.get(DEFAULTS, (stored) => render(normalizeSettings(stored)));
 }
 
 function loadShortcut() {

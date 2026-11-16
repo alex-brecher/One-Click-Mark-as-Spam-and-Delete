@@ -17,19 +17,14 @@
   const TOAST_CLASS = 'ocs-toast';
   const DIALOG_CLASS = 'ocs-dialog';
 
-  const WIDGET_STYLES = ['gmail-icon', 'emphasized', 'compact', 'floating'];
-  const PLACEMENT_MODES = ['toolbar', 'floating'];
-
-  const DEFAULTS = {
-    alsoDelete: true,
-    autoBlockSender: true,
-    confirmEachClick: false,
-    widgetStyle: 'gmail-icon',
-    placementMode: 'toolbar',
-    // Polymorphic: {x, y} viewport pixels in floating placement, {slot: n} in
-    // toolbar placement, null for "wherever the default is".
-    fabPosition: null,
-  };
+  // Shared schema from settings.js, which the manifest loads first.
+  const {
+    DEFAULTS,
+    WIDGET_STYLES,
+    PLACEMENT_MODES,
+    normalizeSettings,
+    normalizePosition,
+  } = globalThis.OCS_SETTINGS;
 
   const LABEL = 'Mark as spam and delete';
   const DISABLED_HINT = 'Open an email or select one or more rows first';
@@ -152,35 +147,6 @@
   // ---------------------------------------------------------------------------
   // Settings
   // ---------------------------------------------------------------------------
-
-  function normalizeSettings(raw) {
-    const source = raw && typeof raw === 'object' ? raw : {};
-    const next = { ...DEFAULTS };
-    for (const key of Object.keys(DEFAULTS)) {
-      if (Object.prototype.hasOwnProperty.call(source, key)) next[key] = source[key];
-    }
-    if (!WIDGET_STYLES.includes(next.widgetStyle)) next.widgetStyle = DEFAULTS.widgetStyle;
-    if (!PLACEMENT_MODES.includes(next.placementMode)) next.placementMode = DEFAULTS.placementMode;
-    for (const key of ['alsoDelete', 'autoBlockSender', 'confirmEachClick']) {
-      if (typeof next[key] !== 'boolean') next[key] = DEFAULTS[key];
-    }
-    next.fabPosition = normalizePosition(next.fabPosition);
-    return next;
-  }
-
-  function normalizePosition(pos) {
-    if (!pos || typeof pos !== 'object') return null;
-    if (typeof pos.slot === 'number' && Number.isFinite(pos.slot)) {
-      return { slot: Math.max(0, Math.round(pos.slot)) };
-    }
-    if (
-      typeof pos.x === 'number' && Number.isFinite(pos.x) &&
-      typeof pos.y === 'number' && Number.isFinite(pos.y)
-    ) {
-      return { x: pos.x, y: pos.y };
-    }
-    return null;
-  }
 
   function storageArea() {
     try {

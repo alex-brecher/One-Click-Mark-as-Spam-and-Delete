@@ -14,6 +14,7 @@ const assert = require('assert');
 const { JSDOM } = require('jsdom');
 
 const ROOT = path.join(__dirname, '..');
+const SETTINGS_JS = fs.readFileSync(path.join(ROOT, 'settings.js'), 'utf8');
 const CONTENT_JS = fs.readFileSync(path.join(ROOT, 'content.js'), 'utf8');
 
 // ---------------------------------------------------------------------------
@@ -72,6 +73,7 @@ function boot(bodyHtml) {
   installLayout(window);
   window.chrome = makeChrome();
   window.__OCS_NO_AUTOSTART__ = true;
+  window.eval(SETTINGS_JS);
   window.eval(CONTENT_JS);
   return { dom, window, document: window.document, api: window.__OCS__ };
 }

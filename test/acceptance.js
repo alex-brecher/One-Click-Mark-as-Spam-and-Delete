@@ -17,6 +17,7 @@ const vm = require('vm');
 const { JSDOM } = require('jsdom');
 
 const ROOT = path.join(__dirname, '..');
+const SETTINGS_JS = fs.readFileSync(path.join(ROOT, 'settings.js'), 'utf8');
 const CONTENT_JS = fs.readFileSync(path.join(ROOT, 'content.js'), 'utf8');
 const BACKGROUND_JS = fs.readFileSync(path.join(ROOT, 'background.js'), 'utf8');
 const POPUP_JS = fs.readFileSync(path.join(ROOT, 'popup.js'), 'utf8');
@@ -135,6 +136,7 @@ function boot(bodyHtml, opts = {}) {
   const chrome = makeChrome(opts.storage);
   window.chrome = chrome.api;
   window.__OCS_NO_AUTOSTART__ = true;
+  window.eval(SETTINGS_JS);
   window.eval(CONTENT_JS);
   const api = window.__OCS__;
   assert.ok(api, 'content.js should expose the __OCS__ test hook');
@@ -629,6 +631,7 @@ test('9d. popup renders settings, saves changes, and resets to defaults', () => 
   installMatchMedia(window, {});
   const chrome = makeChrome({ widgetStyle: 'compact', alsoDelete: false });
   window.chrome = chrome.api;
+  window.eval(SETTINGS_JS);
   window.eval(POPUP_JS);
   window.document.dispatchEvent(new window.Event('DOMContentLoaded'));
 
@@ -1409,6 +1412,7 @@ test('20. popup displays the active Chrome shortcut', () => {
       cb([{ name: 'spam-and-delete', shortcut: 'Alt+Z' }]);
     },
   };
+  window.eval(SETTINGS_JS);
   window.eval(POPUP_JS);
   window.document.dispatchEvent(new window.Event('DOMContentLoaded'));
 
@@ -1517,6 +1521,7 @@ test('22b. the widget comes back after a back/forward cache restore', async () =
   installLayout(window);
   installMatchMedia(window, {});
   window.chrome = makeChrome({}).api;
+  window.eval(SETTINGS_JS);
   window.eval(CONTENT_JS); // autostart on
   const api = window.__OCS__;
   await wait(20); // autostart waits for DOMContentLoaded
@@ -1582,6 +1587,30 @@ test('25. a placement change from the popup cancels a pending drag save', async 
   await wait(400);
   assert.strictEqual(chrome.store.fabPosition, null, 'stale slot must not overwrite the reset');
   api.destroy();
+});
+
+test('26. popup and content script share one settings schema', () => {
+  assert.deepStrictEqual(plain(MANIFEST.content_scripts[0].js), ['settings.js', 'content.js'],
+    'settings.js loads before content.js');
+  assert.ok(/<script src="settings.js"><\/script>\s*<script src="popup.js">/.test(POPUP_HTML),
+    'popup.html loads settings.js before popup.js');
+  assert.ok(!/alsoDelete:\s*true/.test(CONTENT_JS), 'content.js has no own defaults');
+  assert.ok(!/alsoDelete:\s*true/.test(POPUP_JS), 'popup.js has no own defaults');
+});
+
+test('26b. popup repairs invalid stored values instead of selecting nothing', () => {
+  const dom = new JSDOM(POPUP_HTML, { url: 'chrome-extension://test/popup.html', runScripts: 'outside-only' });
+  const { window } = dom;
+  installLayout(window);
+  installMatchMedia(window, {});
+  window.chrome = makeChrome({ widgetStyle: 'bogus', placementMode: 42, alsoDelete: 'yes' }).api;
+  window.eval(SETTINGS_JS);
+  window.eval(POPUP_JS);
+  window.document.dispatchEvent(new window.Event('DOMContentLoaded'));
+  const doc = window.document;
+  assert.strictEqual(doc.querySelector('input[name="widgetStyle"][value="gmail-icon"]').checked, true);
+  assert.strictEqual(doc.querySelector('input[name="placementMode"][value="toolbar"]').checked, true);
+  assert.strictEqual(doc.getElementById('alsoDelete').checked, true);
 });
 
 // ---------------------------------------------------------------------------
