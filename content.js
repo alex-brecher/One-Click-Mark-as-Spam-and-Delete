@@ -65,7 +65,7 @@
   let actionRequestInFlight = false;
   let started = false;
   let lifecycleToken = 0;
-  const rafHandles = new Set();
+  const rafCancels = new Set(); // one cancel() per rafBatched scheduler
   let saveTimer = null;
   const timers = new Set();
   const teardown = [];
@@ -110,14 +110,18 @@
    */
   function rafBatched(fn) {
     let handle = null;
+    // destroy() calls this, so a frame cancelled mid-flight cannot leave the
+    // scheduler blocked after a later start() (back/forward cache restore).
+    rafCancels.add(() => {
+      cancelRaf(handle);
+      handle = null;
+    });
     return function scheduled() {
       if (handle != null) return;
       handle = raf(() => {
-        rafHandles.delete(handle);
         handle = null;
         fn();
       });
-      rafHandles.add(handle);
     };
   }
 
@@ -1569,8 +1573,7 @@
     deathObserver = null;
     observedToolbar = null;
     stopBootstrapObserver();
-    for (const handle of rafHandles) cancelRaf(handle);
-    rafHandles.clear();
+    for (const cancel of rafCancels) cancel();
     for (const id of timers) clearTimeout(id);
     timers.clear();
     saveTimer = null;

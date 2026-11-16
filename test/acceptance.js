@@ -1629,6 +1629,22 @@ test('27. the command relay ignores messages from other extensions', () => {
   api.destroy();
 });
 
+test('22c. a frame pending at pagehide does not block re-anchoring after restore', async () => {
+  const { api, document, window } = boot(FLAT_TOOLBAR);
+  api.start();
+  await wait(20);
+  window.dispatchEvent(new window.Event('resize')); // queue a re-anchor frame
+  api.destroy(); // pagehide before that frame runs
+  api.start(); // bfcache restore
+  await wait(20);
+  const widget = document.getElementById(api.WIDGET_ID);
+  widget.remove(); // Gmail drops it during a re-render
+  window.dispatchEvent(new window.HashChangeEvent('hashchange'));
+  await wait(40);
+  assert.ok(document.getElementById(api.WIDGET_ID), 're-anchor still runs after restart');
+  api.destroy();
+});
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
