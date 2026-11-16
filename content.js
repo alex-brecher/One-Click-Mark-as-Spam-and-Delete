@@ -724,7 +724,7 @@
   function placementExplanation() {
     if (placementStatus === 'toolbar') return '';
     if (placementStatus === 'fallback') {
-      return 'Gmail toolbar not found — using the floating button instead.';
+      return 'Gmail toolbar not found, so the floating button is shown instead.';
     }
     return '';
   }
@@ -1094,8 +1094,8 @@
     widget.classList.toggle('ocs-widget--disabled', !enabled);
     widget.setAttribute('aria-disabled', enabled ? 'false' : 'true');
     const suffix = placementExplanation();
-    const base = enabled ? LABEL : LABEL + ' (unavailable — ' + DISABLED_HINT + ')';
-    const text = suffix ? base + ' — ' + suffix : base;
+    const base = enabled ? LABEL : LABEL + ' (unavailable: ' + DISABLED_HINT + ')';
+    const text = suffix ? base + '. ' + suffix : base;
     widget.setAttribute('aria-label', text);
     widget.setAttribute('data-tooltip', text);
     widget.title = text;
