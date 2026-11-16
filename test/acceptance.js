@@ -17,6 +17,7 @@ const vm = require('vm');
 const { JSDOM } = require('jsdom');
 
 const ROOT = path.join(__dirname, '..');
+const SETTINGS_JS = fs.readFileSync(path.join(ROOT, 'settings.js'), 'utf8');
 const CONTENT_JS = fs.readFileSync(path.join(ROOT, 'content.js'), 'utf8');
 const BACKGROUND_JS = fs.readFileSync(path.join(ROOT, 'background.js'), 'utf8');
 const POPUP_JS = fs.readFileSync(path.join(ROOT, 'popup.js'), 'utf8');
@@ -135,6 +136,7 @@ function boot(bodyHtml, opts = {}) {
   const chrome = makeChrome(opts.storage);
   window.chrome = chrome.api;
   window.__OCS_NO_AUTOSTART__ = true;
+  window.eval(SETTINGS_JS);
   window.eval(CONTENT_JS);
   const api = window.__OCS__;
   assert.ok(api, 'content.js should expose the __OCS__ test hook');
@@ -143,6 +145,10 @@ function boot(bodyHtml, opts = {}) {
 }
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** The accept / dismiss controls of Gmail's block-sender prompt, or null. */
+const blockAccept = (api) => { const p = api.findBlockSenderPrompt(); return p ? p.accept : null; };
+const blockDismiss = (api) => { const p = api.findBlockSenderPrompt(); return p ? p.dismiss : null; };
 
 /**
  * Values produced inside jsdom carry that realm's Object/Array prototypes, so
@@ -629,6 +635,7 @@ test('9d. popup renders settings, saves changes, and resets to defaults', () => 
   installMatchMedia(window, {});
   const chrome = makeChrome({ widgetStyle: 'compact', alsoDelete: false });
   window.chrome = chrome.api;
+  window.eval(SETTINGS_JS);
   window.eval(POPUP_JS);
   window.document.dispatchEvent(new window.Event('DOMContentLoaded'));
 
@@ -778,19 +785,19 @@ test('13. auto-confirm only fires inside role=dialog containers', () => {
   const inDialog = boot(`
     <div role="dialog" id="dlg"><div id="block" role="button">Yes, block</div></div>
   `);
-  assert.strictEqual(inDialog.api.findBlockSenderButton(), inDialog.document.getElementById('block'));
+  assert.strictEqual(blockAccept(inDialog.api), inDialog.document.getElementById('block'));
 
   // The same markup planted by a malicious email must never be clicked.
   const inEmail = boot(EMAIL_BODY);
-  assert.strictEqual(inEmail.api.findBlockSenderButton(), null);
+  assert.strictEqual(blockAccept(inEmail.api), null);
 
   // ...not even when the email wraps it in its own fake dialog.
   const fakeDialog = boot('<div class="a3s"><div role="dialog"><div role="button">Yes, block</div></div></div>');
-  assert.strictEqual(fakeDialog.api.findBlockSenderButton(), null);
+  assert.strictEqual(blockAccept(fakeDialog.api), null);
 
   // A loose button in the page body is not a dialog either.
   const loose = boot('<div role="button">Yes, block</div>');
-  assert.strictEqual(loose.api.findBlockSenderButton(), null);
+  assert.strictEqual(blockAccept(loose.api), null);
 });
 
 test('13a. the block-sender dismiss control must share the verified prompt', () => {
@@ -805,8 +812,8 @@ test('13a. the block-sender dismiss control must share the verified prompt', () 
   assert.strictEqual(prompt.accept, document.getElementById('accept'));
   assert.strictEqual(prompt.dismiss, document.getElementById('dismiss'));
   assert.strictEqual(prompt.blocking, true);
-  assert.strictEqual(api.findBlockSenderDismissButton(), document.getElementById('dismiss'));
-  assert.notStrictEqual(api.findBlockSenderDismissButton(), document.getElementById('unrelated'));
+  assert.strictEqual(blockDismiss(api), document.getElementById('dismiss'));
+  assert.notStrictEqual(blockDismiss(api), document.getElementById('unrelated'));
 });
 
 test('13b. the report-spam pre-confirm requires both Report spam and Unsubscribe', () => {
@@ -832,7 +839,7 @@ test('13c. our own dialog and toast are never treated as Gmail UI', () => {
   assert.ok(ours, 'our dialog rendered');
   assert.strictEqual(ours.getAttribute('role'), 'dialog');
   assert.strictEqual(ours.getAttribute('aria-modal'), 'true');
-  assert.strictEqual(api.findBlockSenderButton(), null);
+  assert.strictEqual(blockAccept(api), null);
   assert.strictEqual(api.findReportSpamInDialog(), null);
   assert.strictEqual(api.findReportSpamButton(), document.getElementById('spam'), 'Gmail controls still resolve');
 });
@@ -860,9 +867,6 @@ test('14. the thread-id guard skips Delete after Gmail auto-advances', async () 
     settings: { alsoDelete: true, autoBlockSender: false, confirmEachClick: false },
   });
   assert.strictEqual(api.getOpenThreadId(), 'thread-a');
-  assert.strictEqual(api.advancedToOtherThread('a', 'b'), true);
-  assert.strictEqual(api.advancedToOtherThread('a', 'a'), false);
-  assert.strictEqual(api.advancedToOtherThread(null, 'b'), false, 'list view is not an auto-advance');
 
   let deleted = 0;
   document.getElementById('del').addEventListener('click', () => { deleted += 1; });
@@ -1409,6 +1413,7 @@ test('20. popup displays the active Chrome shortcut', () => {
       cb([{ name: 'spam-and-delete', shortcut: 'Alt+Z' }]);
     },
   };
+  window.eval(SETTINGS_JS);
   window.eval(POPUP_JS);
   window.document.dispatchEvent(new window.Event('DOMContentLoaded'));
 
@@ -1435,6 +1440,209 @@ test('20c. README documents shortcut rebinding and the service worker', () => {
     readme.includes('death-watch'),
     'README must document the death-watch observer on the toolbar parent'
   );
+});
+
+// --- 21. Hot-path performance (audit 2026-11-16) --------------------------
+
+/** Counts layout reads on one element, the cost the hot paths must avoid. */
+function countRectReads(el) {
+  let reads = 0;
+  const original = el.getBoundingClientRect.bind(el);
+  el.getBoundingClientRect = () => { reads += 1; return original(); };
+  return () => reads;
+}
+
+test('21. the list-view bootstrap observer checks Back at most once per frame', async () => {
+  // Inbox list view: a hidden Back candidate exists, so no toolbar anchor.
+  const { api, document } = boot(
+    '<div id="app"><div id="back" aria-label="Back to Inbox" data-hidden></div></div>'
+  );
+  api.start();
+  await wait(40);
+  const reads = countRectReads(document.getElementById('back'));
+  const app = document.getElementById('app');
+  for (let i = 0; i < 10; i += 1) {
+    app.appendChild(document.createElement('span'));
+    await Promise.resolve(); // separate mutation batches within one frame
+  }
+  await wait(40);
+  assert.ok(reads() <= 2, 'expected at most 2 Back checks, got ' + reads());
+  api.destroy();
+});
+
+test('21b. typing in a text field does not re-run the toolbar checks', async () => {
+  const { api, document, window } = boot(FLAT_TOOLBAR + '<textarea id="compose"></textarea>');
+  api.start();
+  await wait(40);
+  const reads = countRectReads(document.getElementById('back'));
+  const compose = document.getElementById('compose');
+  for (let i = 0; i < 5; i += 1) {
+    compose.dispatchEvent(new window.KeyboardEvent('keyup', { key: 'a', bubbles: true }));
+  }
+  await wait(40);
+  assert.strictEqual(reads(), 0, 'keyup in Compose must not trigger toolbar checks');
+
+  document.body.dispatchEvent(new window.KeyboardEvent('keyup', { key: 'x', bubbles: true }));
+  await wait(40);
+  assert.ok(reads() > 0, 'keyup outside text fields still refreshes the widget');
+  api.destroy();
+});
+
+test('21c. moving the widget to its current slot writes nothing to the DOM', async () => {
+  const { api, document, window } = boot(FLAT_TOOLBAR);
+  api.injectWidget();
+  const toolbar = document.getElementById('toolbar');
+  const records = [];
+  const mo = new window.MutationObserver((r) => records.push(...r));
+  mo.observe(toolbar, { childList: true });
+  api.moveWidgetToSlot(api.currentSlotIndex(), false);
+  await Promise.resolve();
+  mo.disconnect();
+  assert.strictEqual(records.length, 0);
+  api.destroy();
+});
+
+test('22. a cancelled "Leave site?" prompt does not remove the widget', () => {
+  const { api, document, window } = boot(FLAT_TOOLBAR);
+  api.start();
+  assert.ok(document.getElementById(api.WIDGET_ID));
+  window.dispatchEvent(new window.Event('beforeunload'));
+  assert.ok(document.getElementById(api.WIDGET_ID), 'widget survives beforeunload');
+  window.dispatchEvent(new window.Event('pagehide'));
+  assert.strictEqual(document.getElementById(api.WIDGET_ID), null, 'pagehide still cleans up');
+});
+
+test('22b. the widget comes back after a back/forward cache restore', async () => {
+  const dom = new JSDOM(`<!doctype html><html><body>${FLAT_TOOLBAR}</body></html>`, {
+    url: 'https://mail.google.com/mail/u/0/#inbox',
+    pretendToBeVisual: true,
+    runScripts: 'outside-only',
+  });
+  const { window } = dom;
+  installLayout(window);
+  installMatchMedia(window, {});
+  window.chrome = makeChrome({}).api;
+  window.eval(SETTINGS_JS);
+  window.eval(CONTENT_JS); // autostart on
+  const api = window.__OCS__;
+  await wait(20); // autostart waits for DOMContentLoaded
+  assert.ok(window.document.getElementById(api.WIDGET_ID));
+  window.dispatchEvent(new window.Event('pagehide'));
+  assert.strictEqual(window.document.getElementById(api.WIDGET_ID), null);
+  const restore = new window.Event('pageshow');
+  Object.defineProperty(restore, 'persisted', { value: true });
+  window.dispatchEvent(restore);
+  assert.ok(window.document.getElementById(api.WIDGET_ID), 'widget restored');
+  api.destroy();
+});
+
+test('23. a second request during a running action is ignored silently', async () => {
+  const { api, document } = boot(FLAT_TOOLBAR + '<div data-thread-perm-id="t1"></div>', {
+    settings: { alsoDelete: false, autoBlockSender: false, confirmEachClick: false },
+  });
+  api.injectWidget();
+  const first = api.handleAction();
+  // Gmail opens its own dialog while the first run waits for it.
+  const dialog = document.createElement('div');
+  dialog.setAttribute('role', 'dialog');
+  dialog.textContent = 'Report spam or unsubscribe?';
+  document.body.appendChild(dialog);
+  const second = await api.handleAction();
+  assert.strictEqual(second, false);
+  const toast = document.querySelector('.ocs-toast');
+  assert.ok(!toast || !/close the open gmail dialog/i.test(toast.textContent),
+    'no misleading dialog warning while the first run is still going');
+  dialog.remove();
+  await first;
+  api.destroy();
+});
+
+test('24. a floating button stays on screen after the window shrinks', async () => {
+  const { api, document, window } = boot('<div id="app"></div>', {
+    storage: { placementMode: 'floating', fabPosition: { x: 1000, y: 700 } },
+  });
+  window.innerWidth = 1200;
+  window.innerHeight = 800;
+  api.start();
+  await wait(20);
+  const widget = document.getElementById(api.WIDGET_ID);
+  assert.strictEqual(widget.style.left, '1000px');
+  window.innerWidth = 500;
+  window.innerHeight = 400;
+  window.dispatchEvent(new window.Event('resize'));
+  await wait(40);
+  assert.ok(parseFloat(widget.style.left) <= 500 - 24 - 4, 'left clamped: ' + widget.style.left);
+  assert.ok(parseFloat(widget.style.top) <= 400 - 24 - 4, 'top clamped: ' + widget.style.top);
+  api.destroy();
+});
+
+test('25. a placement change from the popup cancels a pending drag save', async () => {
+  const { api, chrome } = boot(FLAT_TOOLBAR);
+  api.start();
+  await wait(20);
+  api.moveWidgetToSlot(0); // queues a debounced { slot: 0 } save
+  const change = { placementMode: { newValue: 'floating' }, fabPosition: { newValue: null } };
+  chrome.store.placementMode = 'floating';
+  chrome.store.fabPosition = null;
+  for (const fn of chrome.listeners) fn(change, 'sync');
+  await wait(400);
+  assert.strictEqual(chrome.store.fabPosition, null, 'stale slot must not overwrite the reset');
+  api.destroy();
+});
+
+test('26. popup and content script share one settings schema', () => {
+  assert.deepStrictEqual(plain(MANIFEST.content_scripts[0].js), ['settings.js', 'content.js'],
+    'settings.js loads before content.js');
+  assert.ok(/<script src="settings.js"><\/script>\s*<script src="popup.js">/.test(POPUP_HTML),
+    'popup.html loads settings.js before popup.js');
+  assert.ok(!/alsoDelete:\s*true/.test(CONTENT_JS), 'content.js has no own defaults');
+  assert.ok(!/alsoDelete:\s*true/.test(POPUP_JS), 'popup.js has no own defaults');
+});
+
+test('26b. popup repairs invalid stored values instead of selecting nothing', () => {
+  const dom = new JSDOM(POPUP_HTML, { url: 'chrome-extension://test/popup.html', runScripts: 'outside-only' });
+  const { window } = dom;
+  installLayout(window);
+  installMatchMedia(window, {});
+  window.chrome = makeChrome({ widgetStyle: 'bogus', placementMode: 42, alsoDelete: 'yes' }).api;
+  window.eval(SETTINGS_JS);
+  window.eval(POPUP_JS);
+  window.document.dispatchEvent(new window.Event('DOMContentLoaded'));
+  const doc = window.document;
+  assert.strictEqual(doc.querySelector('input[name="widgetStyle"][value="gmail-icon"]').checked, true);
+  assert.strictEqual(doc.querySelector('input[name="placementMode"][value="toolbar"]').checked, true);
+  assert.strictEqual(doc.getElementById('alsoDelete').checked, true);
+});
+
+test('27. the command relay ignores messages from other extensions', () => {
+  const { api, document, chrome } = boot(FLAT_TOOLBAR + '<div data-thread-perm-id="t1"></div>', {
+    storage: { alsoDelete: false, autoBlockSender: false },
+  });
+  chrome.api.runtime.id = 'self-id';
+  let fired = 0;
+  document.getElementById('spam').addEventListener('click', () => { fired += 1; });
+  api.start();
+  chrome.messageListeners[0]({ type: 'ocs-spam-and-delete' }, { id: 'other-id' });
+  assert.strictEqual(fired, 0, 'foreign sender ignored');
+  chrome.messageListeners[0]({ type: 'ocs-spam-and-delete' }, { id: 'self-id' });
+  assert.strictEqual(fired, 1, 'own service worker accepted');
+  api.destroy();
+});
+
+test('22c. a frame pending at pagehide does not block re-anchoring after restore', async () => {
+  const { api, document, window } = boot(FLAT_TOOLBAR);
+  api.start();
+  await wait(20);
+  window.dispatchEvent(new window.Event('resize')); // queue a re-anchor frame
+  api.destroy(); // pagehide before that frame runs
+  api.start(); // bfcache restore
+  await wait(20);
+  const widget = document.getElementById(api.WIDGET_ID);
+  widget.remove(); // Gmail drops it during a re-render
+  window.dispatchEvent(new window.HashChangeEvent('hashchange'));
+  await wait(40);
+  assert.ok(document.getElementById(api.WIDGET_ID), 're-anchor still runs after restart');
+  api.destroy();
 });
 
 // ---------------------------------------------------------------------------

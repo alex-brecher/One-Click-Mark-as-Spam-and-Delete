@@ -17,19 +17,14 @@
   const TOAST_CLASS = 'ocs-toast';
   const DIALOG_CLASS = 'ocs-dialog';
 
-  const WIDGET_STYLES = ['gmail-icon', 'emphasized', 'compact', 'floating'];
-  const PLACEMENT_MODES = ['toolbar', 'floating'];
-
-  const DEFAULTS = {
-    alsoDelete: true,
-    autoBlockSender: true,
-    confirmEachClick: false,
-    widgetStyle: 'gmail-icon',
-    placementMode: 'toolbar',
-    // Polymorphic: {x, y} viewport pixels in floating placement, {slot: n} in
-    // toolbar placement, null for "wherever the default is".
-    fabPosition: null,
-  };
+  // Shared schema from settings.js, which the manifest loads first.
+  const {
+    DEFAULTS,
+    WIDGET_STYLES,
+    PLACEMENT_MODES,
+    normalizeSettings,
+    normalizePosition,
+  } = globalThis.OCS_SETTINGS;
 
   const LABEL = 'Mark as spam and delete';
   const DISABLED_HINT = 'Open an email or select one or more rows first';
@@ -70,7 +65,7 @@
   let actionRequestInFlight = false;
   let started = false;
   let lifecycleToken = 0;
-  let rafHandle = null;
+  const rafCancels = new Set(); // one cancel() per rafBatched scheduler
   let saveTimer = null;
   const timers = new Set();
   const teardown = [];
@@ -108,12 +103,23 @@
     }
   }
 
-  /** Coalesces bursts of calls into a single call on the next animation frame. */
+  /**
+   * Coalesces bursts of calls into a single call on the next animation frame.
+   * Each scheduler keeps its own pending handle so two schedulers never
+   * swallow each other's work.
+   */
   function rafBatched(fn) {
+    let handle = null;
+    // destroy() calls this, so a frame cancelled mid-flight cannot leave the
+    // scheduler blocked after a later start() (back/forward cache restore).
+    rafCancels.add(() => {
+      cancelRaf(handle);
+      handle = null;
+    });
     return function scheduled() {
-      if (rafHandle != null) return;
-      rafHandle = raf(() => {
-        rafHandle = null;
+      if (handle != null) return;
+      handle = raf(() => {
+        handle = null;
         fn();
       });
     };
@@ -145,35 +151,6 @@
   // ---------------------------------------------------------------------------
   // Settings
   // ---------------------------------------------------------------------------
-
-  function normalizeSettings(raw) {
-    const source = raw && typeof raw === 'object' ? raw : {};
-    const next = { ...DEFAULTS };
-    for (const key of Object.keys(DEFAULTS)) {
-      if (Object.prototype.hasOwnProperty.call(source, key)) next[key] = source[key];
-    }
-    if (!WIDGET_STYLES.includes(next.widgetStyle)) next.widgetStyle = DEFAULTS.widgetStyle;
-    if (!PLACEMENT_MODES.includes(next.placementMode)) next.placementMode = DEFAULTS.placementMode;
-    for (const key of ['alsoDelete', 'autoBlockSender', 'confirmEachClick']) {
-      if (typeof next[key] !== 'boolean') next[key] = DEFAULTS[key];
-    }
-    next.fabPosition = normalizePosition(next.fabPosition);
-    return next;
-  }
-
-  function normalizePosition(pos) {
-    if (!pos || typeof pos !== 'object') return null;
-    if (typeof pos.slot === 'number' && Number.isFinite(pos.slot)) {
-      return { slot: Math.max(0, Math.round(pos.slot)) };
-    }
-    if (
-      typeof pos.x === 'number' && Number.isFinite(pos.x) &&
-      typeof pos.y === 'number' && Number.isFinite(pos.y)
-    ) {
-      return { x: pos.x, y: pos.y };
-    }
-    return null;
-  }
 
   function storageArea() {
     try {
@@ -211,12 +188,16 @@
     }
   }
 
+  function cancelPendingSave() {
+    if (!saveTimer) return;
+    clearTimeout(saveTimer);
+    timers.delete(saveTimer);
+    saveTimer = null;
+  }
+
   /** Debounced so a drag writes once when it settles, not on every pointermove. */
   function persistDebounced(patch, delay = 300) {
-    if (saveTimer) {
-      clearTimeout(saveTimer);
-      timers.delete(saveTimer);
-    }
+    cancelPendingSave();
     saveTimer = later(() => {
       saveTimer = null;
       persist(patch);
@@ -236,6 +217,9 @@
           before.widgetStyle !== settings.widgetStyle ||
           before.placementMode !== settings.placementMode;
         if (needsRebuild) {
+          // The popup resets fabPosition with a placement or style change. A
+          // drag save still waiting to fire would restore the old position.
+          cancelPendingSave();
           removeWidget();
           injectWidget();
         } else {
@@ -465,18 +449,12 @@
     return null;
   }
 
-  // Finds Gmail's "Spam reported. Also block sender?" confirmation button.
-  // Gmail shows this either as a modal dialog or as a bottom-left snackbar.
-  // Search is restricted to dialog/alert containers only — never the message
-  // body or the document at large (see isInsideEmailContent).
-  function findBlockSenderButton() {
-    const prompt = findBlockSenderPrompt();
-    return prompt ? prompt.accept : null;
-  }
-
   /**
-   * Finds Gmail's block-sender prompt and its safe response controls. The
-   * dismiss control is accepted only when the same container has "Yes, block".
+   * Finds Gmail's "Spam reported. Also block sender?" prompt (modal dialog or
+   * bottom-left snackbar) and its safe response controls. The search covers
+   * dialog/alert containers only, never the message body (see
+   * isInsideEmailContent). The dismiss control is accepted only when the same
+   * container has "Yes, block".
    */
   function findBlockSenderPrompt() {
     const dismissLabels = new Set(['no, thanks', 'not now', 'cancel', 'no']);
@@ -500,11 +478,6 @@
       }
     }
     return null;
-  }
-
-  function findBlockSenderDismissButton() {
-    const prompt = findBlockSenderPrompt();
-    return prompt ? prompt.dismiss : null;
   }
 
   /** Gmail's own "Undo" affordance in its post-action snackbar. */
@@ -609,14 +582,6 @@
     return 'the selected messages changed';
   }
 
-  /**
-   * True when Gmail auto-advanced to a different conversation between reporting
-   * spam and deleting — in that case the Delete step must be skipped.
-   */
-  function advancedToOtherThread(before, now) {
-    return Boolean(before && now && now !== before);
-  }
-
   /** Whether there is anything for the action to operate on right now. */
   function hasActionableTarget() {
     if (findReportSpamButton()) return true;
@@ -645,8 +610,11 @@
    * Gmail themes are honoured. Falls back to the OS preference via matchMedia.
    */
   function detectTheme() {
+    const toolbar = observedToolbar && observedToolbar.isConnected
+      ? observedToolbar
+      : findToolbarContainer();
     const probes = [
-      findToolbarContainer(),
+      toolbar,
       document.querySelector('[role="main"]'),
       document.body,
     ];
@@ -788,8 +756,7 @@
       }
     }
     // No Archive control in this view: sit immediately after Back.
-    const backSibling = back;
-    return { parent: back.parentNode, before: backSibling.nextSibling };
+    return { parent: back.parentNode, before: back.nextSibling };
   }
 
   function ensureWidget() {
@@ -923,6 +890,12 @@
   // Position (floating x/y, toolbar slot)
   // ---------------------------------------------------------------------------
 
+  const scheduleFloatingClamp = rafBatched(() => {
+    const widget = getWidget();
+    if (!widget || isToolbarPlaced()) return;
+    applyFloatingPosition(widget, settings.fabPosition);
+  });
+
   function applyPosition() {
     const widget = getWidget();
     if (!widget) return;
@@ -972,9 +945,13 @@
     if (!widget || !widget.parentNode) return -1;
     const slots = toolbarSlots();
     const clamped = Math.max(0, Math.min(index, slots.length));
-    const before = slots[clamped] || null;
-    if (before) widget.parentNode.insertBefore(widget, before);
-    else widget.parentNode.appendChild(widget);
+    // Re-inserting a node that is already in place still produces mutation
+    // records, which wake the toolbar observer for nothing.
+    if (currentSlotIndex() !== clamped) {
+      const before = slots[clamped] || null;
+      if (before) widget.parentNode.insertBefore(widget, before);
+      else widget.parentNode.appendChild(widget);
+    }
     const actual = currentSlotIndex();
     if (save) {
       settings.fabPosition = { slot: actual };
@@ -1425,7 +1402,8 @@
         );
         if (!ok) return false;
       }
-      return spamAndDelete();
+      // await, so the in-flight flag stays set until the action finishes.
+      return await spamAndDelete();
     } finally {
       actionRequestInFlight = false;
     }
@@ -1485,14 +1463,24 @@
    * observer exists only to catch that first paint and disconnects the moment
    * the widget is anchored, so no broad observer stays alive.
    */
+  const BACK_QUERY = BACK_SELECTORS.join(', ');
+
+  // Runs at most once per animation frame. The single querySelector is a cheap
+  // gate: the full findBackButton() check reads layout and style, so it only
+  // runs once a Back candidate exists at all. In the inbox list view (no Back
+  // button) this observer can stay alive, so its per-mutation cost must be low.
+  const bootstrapCheck = rafBatched(() => {
+    if (!bootstrapObserver) return;
+    if (!document.querySelector(BACK_QUERY)) return;
+    if (findBackButton()) {
+      stopBootstrapObserver();
+      reAnchorWidget();
+    }
+  });
+
   function startBootstrapObserver() {
     if (bootstrapObserver || !document.body) return;
-    bootstrapObserver = new MutationObserver(() => {
-      if (findBackButton()) {
-        stopBootstrapObserver();
-        reAnchorWidget();
-      }
-    });
+    bootstrapObserver = new MutationObserver(bootstrapCheck);
     bootstrapObserver.observe(document.body, { childList: true, subtree: true });
   }
 
@@ -1529,11 +1517,19 @@
     on(window, 'hashchange', scheduleReAnchor);
     on(window, 'popstate', scheduleReAnchor);
     on(window, 'resize', scheduleReAnchor);
+    // Keep a dragged floating button inside the viewport when the window shrinks.
+    on(window, 'resize', scheduleFloatingClamp);
 
     // Event delegation: one capture-phase listener keeps the enabled/disabled
     // state in sync with the user's selection without any polling.
     on(document, 'click', scheduleReAnchor, true);
-    on(document, 'keyup', scheduleReAnchor, true);
+    // Selection changes from the keyboard (x, j/k, Shift+arrows) happen outside
+    // text fields. Skipping editable targets keeps typing in Compose or search
+    // from re-running the toolbar checks on every keystroke.
+    on(document, 'keyup', (e) => {
+      if (isEditableTarget(e.target)) return;
+      scheduleReAnchor();
+    }, true);
     const motionMq = safeMatchMedia('(prefers-reduced-motion: reduce)');
     if (motionMq && typeof motionMq.addEventListener === 'function') {
       const handler = () => applyPresentationClasses(getWidget());
@@ -1541,11 +1537,13 @@
       teardown.push(() => motionMq.removeEventListener('change', handler));
     }
 
-    // Optional: a future background page can relay the manifest command.
+    // The service worker relays the manifest keyboard command here.
     try {
       if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
-        const msgHandler = (msg) => {
+        const msgHandler = (msg, sender) => {
           if (!msg || msg.type !== 'ocs-spam-and-delete') return;
+          // Accept the command only from this extension's own service worker.
+          if (sender && chrome.runtime.id && sender.id !== chrome.runtime.id) return;
           if (isEditableTarget(document.activeElement)) {
             showToast('The shortcut is unavailable while you type', 'warn');
             return;
@@ -1561,8 +1559,10 @@
       /* ignore */
     }
 
+    // pagehide only. beforeunload also fires when Gmail shows "Leave site?"
+    // and the user cancels, which would tear the widget down on a page that
+    // stays open.
     on(window, 'pagehide', destroy);
-    on(window, 'beforeunload', destroy);
   }
 
   function destroy() {
@@ -1573,8 +1573,7 @@
     deathObserver = null;
     observedToolbar = null;
     stopBootstrapObserver();
-    cancelRaf(rafHandle);
-    rafHandle = null;
+    for (const cancel of rafCancels) cancel();
     for (const id of timers) clearTimeout(id);
     timers.clear();
     saveTimer = null;
@@ -1599,6 +1598,11 @@
     } else {
       start();
     }
+    // A page restored from the back/forward cache fired pagehide (and so
+    // destroy) on the way out; bring the widget back when it returns.
+    window.addEventListener('pageshow', (e) => {
+      if (e.persisted && !started) start();
+    });
   }
 
   // Test hook. The content script runs in an isolated world, so this is not
@@ -1628,16 +1632,13 @@
     findDeleteButton,
     findDeleteForeverConfirm,
     findReportSpamInDialog,
-    findBlockSenderButton,
     findBlockSenderPrompt,
-    findBlockSenderDismissButton,
     findGmailUndoButton,
     getOpenThreadId,
     getRowThreadId,
     selectedRows,
     captureActionTarget,
     sameActionTarget,
-    advancedToOtherThread,
     hasActionableTarget,
     detectTheme,
     prefersReducedMotion,
