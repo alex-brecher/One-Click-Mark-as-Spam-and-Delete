@@ -1439,7 +1439,8 @@
         );
         if (!ok) return false;
       }
-      return spamAndDelete();
+      // await, so the in-flight flag stays set until the action finishes.
+      return await spamAndDelete();
     } finally {
       actionRequestInFlight = false;
     }

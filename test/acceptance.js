@@ -1530,6 +1530,27 @@ test('22b. the widget comes back after a back/forward cache restore', async () =
   api.destroy();
 });
 
+test('23. a second request during a running action is ignored silently', async () => {
+  const { api, document } = boot(FLAT_TOOLBAR + '<div data-thread-perm-id="t1"></div>', {
+    settings: { alsoDelete: false, autoBlockSender: false, confirmEachClick: false },
+  });
+  api.injectWidget();
+  const first = api.handleAction();
+  // Gmail opens its own dialog while the first run waits for it.
+  const dialog = document.createElement('div');
+  dialog.setAttribute('role', 'dialog');
+  dialog.textContent = 'Report spam or unsubscribe?';
+  document.body.appendChild(dialog);
+  const second = await api.handleAction();
+  assert.strictEqual(second, false);
+  const toast = document.querySelector('.ocs-toast');
+  assert.ok(!toast || !/close the open gmail dialog/i.test(toast.textContent),
+    'no misleading dialog warning while the first run is still going');
+  dialog.remove();
+  await first;
+  api.destroy();
+});
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
