@@ -70,7 +70,7 @@
   let actionRequestInFlight = false;
   let started = false;
   let lifecycleToken = 0;
-  let rafHandle = null;
+  const rafHandles = new Set();
   let saveTimer = null;
   const timers = new Set();
   const teardown = [];
@@ -108,14 +108,21 @@
     }
   }
 
-  /** Coalesces bursts of calls into a single call on the next animation frame. */
+  /**
+   * Coalesces bursts of calls into a single call on the next animation frame.
+   * Each scheduler keeps its own pending handle so two schedulers never
+   * swallow each other's work.
+   */
   function rafBatched(fn) {
+    let handle = null;
     return function scheduled() {
-      if (rafHandle != null) return;
-      rafHandle = raf(() => {
-        rafHandle = null;
+      if (handle != null) return;
+      handle = raf(() => {
+        rafHandles.delete(handle);
+        handle = null;
         fn();
       });
+      rafHandles.add(handle);
     };
   }
 
@@ -645,8 +652,11 @@
    * Gmail themes are honoured. Falls back to the OS preference via matchMedia.
    */
   function detectTheme() {
+    const toolbar = observedToolbar && observedToolbar.isConnected
+      ? observedToolbar
+      : findToolbarContainer();
     const probes = [
-      findToolbarContainer(),
+      toolbar,
       document.querySelector('[role="main"]'),
       document.body,
     ];
@@ -972,9 +982,13 @@
     if (!widget || !widget.parentNode) return -1;
     const slots = toolbarSlots();
     const clamped = Math.max(0, Math.min(index, slots.length));
-    const before = slots[clamped] || null;
-    if (before) widget.parentNode.insertBefore(widget, before);
-    else widget.parentNode.appendChild(widget);
+    // Re-inserting a node that is already in place still produces mutation
+    // records, which wake the toolbar observer for nothing.
+    if (currentSlotIndex() !== clamped) {
+      const before = slots[clamped] || null;
+      if (before) widget.parentNode.insertBefore(widget, before);
+      else widget.parentNode.appendChild(widget);
+    }
     const actual = currentSlotIndex();
     if (save) {
       settings.fabPosition = { slot: actual };
@@ -1485,14 +1499,24 @@
    * observer exists only to catch that first paint and disconnects the moment
    * the widget is anchored, so no broad observer stays alive.
    */
+  const BACK_QUERY = BACK_SELECTORS.join(', ');
+
+  // Runs at most once per animation frame. The single querySelector is a cheap
+  // gate: the full findBackButton() check reads layout and style, so it only
+  // runs once a Back candidate exists at all. In the inbox list view (no Back
+  // button) this observer can stay alive, so its per-mutation cost must be low.
+  const bootstrapCheck = rafBatched(() => {
+    if (!bootstrapObserver) return;
+    if (!document.querySelector(BACK_QUERY)) return;
+    if (findBackButton()) {
+      stopBootstrapObserver();
+      reAnchorWidget();
+    }
+  });
+
   function startBootstrapObserver() {
     if (bootstrapObserver || !document.body) return;
-    bootstrapObserver = new MutationObserver(() => {
-      if (findBackButton()) {
-        stopBootstrapObserver();
-        reAnchorWidget();
-      }
-    });
+    bootstrapObserver = new MutationObserver(bootstrapCheck);
     bootstrapObserver.observe(document.body, { childList: true, subtree: true });
   }
 
@@ -1533,7 +1557,13 @@
     // Event delegation: one capture-phase listener keeps the enabled/disabled
     // state in sync with the user's selection without any polling.
     on(document, 'click', scheduleReAnchor, true);
-    on(document, 'keyup', scheduleReAnchor, true);
+    // Selection changes from the keyboard (x, j/k, Shift+arrows) happen outside
+    // text fields. Skipping editable targets keeps typing in Compose or search
+    // from re-running the toolbar checks on every keystroke.
+    on(document, 'keyup', (e) => {
+      if (isEditableTarget(e.target)) return;
+      scheduleReAnchor();
+    }, true);
     const motionMq = safeMatchMedia('(prefers-reduced-motion: reduce)');
     if (motionMq && typeof motionMq.addEventListener === 'function') {
       const handler = () => applyPresentationClasses(getWidget());
@@ -1573,8 +1603,8 @@
     deathObserver = null;
     observedToolbar = null;
     stopBootstrapObserver();
-    cancelRaf(rafHandle);
-    rafHandle = null;
+    for (const handle of rafHandles) cancelRaf(handle);
+    rafHandles.clear();
     for (const id of timers) clearTimeout(id);
     timers.clear();
     saveTimer = null;

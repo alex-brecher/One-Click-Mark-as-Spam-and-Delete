@@ -1437,6 +1437,66 @@ test('20c. README documents shortcut rebinding and the service worker', () => {
   );
 });
 
+// --- 21. Hot-path performance (audit 2026-11-16) --------------------------
+
+/** Counts layout reads on one element, the cost the hot paths must avoid. */
+function countRectReads(el) {
+  let reads = 0;
+  const original = el.getBoundingClientRect.bind(el);
+  el.getBoundingClientRect = () => { reads += 1; return original(); };
+  return () => reads;
+}
+
+test('21. the list-view bootstrap observer checks Back at most once per frame', async () => {
+  // Inbox list view: a hidden Back candidate exists, so no toolbar anchor.
+  const { api, document } = boot(
+    '<div id="app"><div id="back" aria-label="Back to Inbox" data-hidden></div></div>'
+  );
+  api.start();
+  await wait(40);
+  const reads = countRectReads(document.getElementById('back'));
+  const app = document.getElementById('app');
+  for (let i = 0; i < 10; i += 1) {
+    app.appendChild(document.createElement('span'));
+    await Promise.resolve(); // separate mutation batches within one frame
+  }
+  await wait(40);
+  assert.ok(reads() <= 2, 'expected at most 2 Back checks, got ' + reads());
+  api.destroy();
+});
+
+test('21b. typing in a text field does not re-run the toolbar checks', async () => {
+  const { api, document, window } = boot(FLAT_TOOLBAR + '<textarea id="compose"></textarea>');
+  api.start();
+  await wait(40);
+  const reads = countRectReads(document.getElementById('back'));
+  const compose = document.getElementById('compose');
+  for (let i = 0; i < 5; i += 1) {
+    compose.dispatchEvent(new window.KeyboardEvent('keyup', { key: 'a', bubbles: true }));
+  }
+  await wait(40);
+  assert.strictEqual(reads(), 0, 'keyup in Compose must not trigger toolbar checks');
+
+  document.body.dispatchEvent(new window.KeyboardEvent('keyup', { key: 'x', bubbles: true }));
+  await wait(40);
+  assert.ok(reads() > 0, 'keyup outside text fields still refreshes the widget');
+  api.destroy();
+});
+
+test('21c. moving the widget to its current slot writes nothing to the DOM', async () => {
+  const { api, document, window } = boot(FLAT_TOOLBAR);
+  api.injectWidget();
+  const toolbar = document.getElementById('toolbar');
+  const records = [];
+  const mo = new window.MutationObserver((r) => records.push(...r));
+  mo.observe(toolbar, { childList: true });
+  api.moveWidgetToSlot(api.currentSlotIndex(), false);
+  await Promise.resolve();
+  mo.disconnect();
+  assert.strictEqual(records.length, 0);
+  api.destroy();
+});
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
