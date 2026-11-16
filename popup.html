@@ -4,11 +4,19 @@
     <meta charset="utf-8" />
     <title>One-Click Spam &amp; Delete: Settings</title>
     <link rel="stylesheet" href="popup.css" />
+    <script src="theme.js"></script>
   </head>
   <body>
     <header>
-      <h1>One-Click Spam &amp; Delete</h1>
-      <p class="subtitle">Settings</p>
+      <div>
+        <h1>One-Click Spam &amp; Delete</h1>
+        <p class="subtitle">Settings</p>
+      </div>
+      <div class="theme-switch" role="radiogroup" aria-label="Colour theme">
+        <button type="button" role="radio" data-theme="system" aria-checked="true">System</button>
+        <button type="button" role="radio" data-theme="light" aria-checked="false">Light</button>
+        <button type="button" role="radio" data-theme="dark" aria-checked="false">Dark</button>
+      </div>
     </header>
 
     <section class="group" aria-labelledby="behaviour-heading">
@@ -16,7 +24,7 @@
 
       <label class="option">
         <input type="checkbox" id="alsoDelete" />
-        <span>Also click Delete after marking as spam (recommended — guarantees the email leaves the inbox)</span>
+        <span>Also click Delete after marking as spam (recommended, so the email leaves the inbox)</span>
       </label>
 
       <label class="option">
@@ -107,9 +115,21 @@
     <section class="group">
       <p class="hint">
         Open an email or check one or more rows, then fire the widget: it runs
-        Gmail's Report Spam, dismisses the follow-up dialogs, and clicks Delete —
-        the same workflow you'd do by hand.
+        Gmail's Report Spam, dismisses the follow-up dialogs, and clicks Delete,
+        the same steps you would take by hand.
       </p>
+    </section>
+
+    <section class="group" aria-labelledby="feedback-heading">
+      <h2 class="group__heading" id="feedback-heading">Feedback</h2>
+      <p class="hint">
+        Have an idea, or did something not work? Tell us. The form opens in a
+        new tab, and nothing is sent until you press Send.
+      </p>
+      <div class="feedback-actions">
+        <button type="button" id="suggestIdea" class="link-button">Suggest an idea</button>
+        <button type="button" id="reportProblem" class="link-button">Report a problem</button>
+      </div>
     </section>
 
     <footer>

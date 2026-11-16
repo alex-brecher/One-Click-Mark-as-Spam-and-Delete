@@ -68,6 +68,19 @@ function loadShortcut() {
   });
 }
 
+// Feedback goes to the hosted form, opened in a new tab. The extension itself
+// sends nothing: the form page collects the report only when the user presses
+// Send. The URL fragment is read by the page and never reaches a server.
+const FEEDBACK_URL = 'https://feedback.netrition.com/';
+
+function feedbackUrl(kind) {
+  let version = '';
+  try { version = chrome.runtime.getManifest().version; } catch (_) {}
+  const params = new URLSearchParams({ app: 'one-click-spam', k: kind });
+  if (version) params.set('p', '/v' + version + '/popup');
+  return FEEDBACK_URL + '#' + params.toString();
+}
+
 function bind() {
   for (const key of CHECKBOXES) {
     const el = document.getElementById(key);
@@ -97,6 +110,11 @@ function bind() {
         setStatus('Defaults restored');
       });
     });
+  }
+
+  for (const [id, kind] of [['suggestIdea', 'idea'], ['reportProblem', 'bug']]) {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('click', () => chrome.tabs.create({ url: feedbackUrl(kind) }));
   }
 
   const customizeShortcut = document.getElementById('customizeShortcut');

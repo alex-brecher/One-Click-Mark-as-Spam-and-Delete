@@ -44,7 +44,8 @@ CONTROL OPTIONS
 PRIVACY
 
 • No analytics, advertising, or tracking
-• No external network requests
+• No external network requests from the extension
+• Optional feedback form: the popup's "Suggest an idea" link opens a web form in a new tab
 • No collection or sale of personal information
 • Local processing in the Gmail tab
 • Chrome sync stores only extension settings

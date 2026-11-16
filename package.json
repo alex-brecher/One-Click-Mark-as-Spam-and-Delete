@@ -1,6 +1,6 @@
 {
   "name": "one-click-mark-as-spam",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "description": "Chrome MV3 extension that adds a one-click Spam & Delete control to Gmail's primary toolbar.",
   "private": true,
   "scripts": {

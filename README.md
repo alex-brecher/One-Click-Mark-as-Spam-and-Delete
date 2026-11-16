@@ -29,6 +29,16 @@ Gmail's primary toolbar, between **Back** and **Archive**.
 > after 30 days. Reporting spam already removes the thread from the inbox on its
 > own; the Delete step just keeps Spam tidy.
 
+## Feedback
+
+The popup's **Suggest an idea** and **Report a problem** links open the shared
+Netrition feedback form (`https://feedback.netrition.com`, app slug
+`one-click-spam`) in a new tab. The extension makes no network request itself:
+the version and feedback type travel in the URL fragment, which the page reads
+locally. Reports are stored in the hub's D1 database, emailed through SparkPost,
+and triaged on the hub's admin page behind Cloudflare Access. The hub lives in
+`alex-brecher/workspace` at `shared/feedback-widget/hub`.
+
 ## Widget styles
 
 Pick one in the popup (the extension icon in Chrome's toolbar):
